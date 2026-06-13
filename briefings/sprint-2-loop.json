@@ -1,0 +1,91 @@
+{
+  "sprintId": "sprint-2-loop",
+  "goal": "Close the human-direction loop: browser-facing POST /api/minutes that records the decision and enqueues the next sprint, bearer-gated GET /api/next-sprint that atomically drains it, and the client decision-slide wiring that fires the POST on Approve/Redirect.",
+  "slides": [
+    {
+      "type": "info",
+      "title": "POST /api/minutes — record the decision, queue the next sprint",
+      "content": [
+        "Spec post-minutes-endpoint: all 6 acceptance criteria met, reviewer PASS",
+        "Browser-facing, NO bearer token (the human's browser calls it directly)",
+        "Body { briefingId, outcome, directive, answers? } — 400 if briefingId/outcome/directive missing or outcome not approve|redirect",
+        "Persists a minutes row (outcome + full body as payload), then enqueues a sprint_queue row with goal=directive",
+        "Enqueued minutes text renders Outcome, Directive, and each answer as a 'title: answer' line",
+        "Returns 201 { minutesId, queuedSprintId }",
+        "Delta vs spec: validation uses an explicit null/empty check (briefingId==null || !outcome || directive==null) so an empty-string approve directive is still accepted — slightly looser than the spec's blanket falsy check, intentional so 'Approve with no proposed next steps' still posts"
+      ],
+      "narration": "First piece: the minutes endpoint. This is the half of the loop the human's browser hits directly, so by design there's no bearer token on it. When the human resolves the decision slide, the browser posts the briefing id, the outcome — approve or redirect — the directive, which becomes the next sprint's goal, and any answers they gave to question slides. We validate hard: a missing briefing id, outcome, or directive, or an outcome that isn't approve or redirect, all get a four-hundred. On a good request we do two writes: we persist a minutes row capturing the full decision as the payload, and then we enqueue a sprint_queue row whose goal is the directive and whose minutes text spells out the outcome, the directive, and every answer as a title-colon-answer line — that rendered text is the standing direction the next sprint's agents will read. We return the two new row ids. One small, deliberate delta from the spec: we accept an empty-string directive on approve, so the human can approve without typing proposed next steps."
+    },
+    {
+      "type": "info",
+      "title": "GET /api/next-sprint — atomic, exactly-once drain",
+      "content": [
+        "Spec get-next-sprint-endpoint: all 5 acceptance criteria met, reviewer PASS",
+        "REQUIRES the bearer token (the local poller scripts/poll.mjs calls it) — 401 on missing/wrong token",
+        "Atomically claims the OLDEST pending row: UPDATE ... WHERE id=(SELECT ... ORDER BY id ASC FOR UPDATE SKIP LOCKED LIMIT 1) SET status='consumed'",
+        "Returns 200 { goal, minutes } on claim; 204 empty body when nothing pending",
+        "Two rapid calls with one pending row -> first 200, second 204 (drained exactly once)",
+        "Delta vs spec: zero — SQL matches the spec verbatim"
+      ],
+      "narration": "Second piece: the next-sprint endpoint — the other half of the loop, drained by the local poller, so this one does require the bearer token; missing or wrong token is a four-oh-one. The interesting part is the claim. We use a single atomic statement that selects the oldest pending row by id ascending, locks it with FOR UPDATE SKIP LOCKED, flips its status to consumed, and returns its goal and minutes — so even with concurrent pollers a queued sprint is handed out exactly once. When the queue is empty we return a two-oh-four with no body. There's zero delta from the spec here; the SQL is verbatim what was specified, and the reviewer confirmed the oldest-first and exactly-once behaviour under a rapid double-claim test."
+    },
+    {
+      "type": "info",
+      "title": "Decision-slide wiring — the browser closes the loop",
+      "content": [
+        "Spec decision-slide-submission: all acceptance criteria met, reviewer PASS, all 54 client tests green",
+        "MeetingView effect watches state.decision and POSTs /api/minutes exactly once (useRef guards StrictMode double-invoke)",
+        "Approve directive = decision slide's content bullets joined with newlines (the proposed next steps); Redirect directive = the human's typed text",
+        "Captured question answers mapped to [{ title, answer }] and included in the POST body",
+        "submitStatus state machine: pending -> 201 shows 'Minutes recorded · next sprint queued' (data-testid=minutes-confirmed, stage removed); non-201/network -> minutes-error + minutes-retry, stage stays",
+        "Retry resets submitStatus to null so the human can re-click — no resetDecision API, useMeetingState untouched",
+        "Delta vs spec: superseded test 'does not call any write endpoint' deleted, replaced with 'does not POST /api/minutes when decision is null' as the spec directed"
+      ],
+      "narration": "Third piece: the client wiring that actually closes the loop. The meeting page watches the decision state, and the moment the human approves or redirects, an effect fires the post to the minutes endpoint exactly once — we guard it with a ref so React's strict-mode double-invoke can't double-submit. On approve, the directive is the decision slide's own proposed next-steps bullets joined together; on redirect, it's the text the human typed. Either way we attach the answers they gave to any question slides. A small status state machine drives the UI: while the post is in flight we're pending, a two-oh-one flips us to a confirmed banner that reads 'Minutes recorded, next sprint queued' and removes the slide stage, and any failure or network error shows an error banner with a retry button that keeps the controls live so they can try again. We deliberately kept the page-gating hook untouched — the retry just resets the submit status. The one test delta the spec called for: we deleted the old 'never writes' test and replaced it with one asserting we don't post when there's no decision yet."
+    },
+    {
+      "type": "info",
+      "title": "Docs updated — current-state only",
+      "content": [
+        "docs/README.md rewritten for buildApp({ db } = {}) injectable db layer (DB routes testable via app.inject without Postgres)",
+        "Documented POST /api/minutes (no token) and GET /api/next-sprint (bearer, atomic claim)",
+        "db.js functions listed: insertMinutes, enqueueSprint, claimNextSprint",
+        "MeetingView submission flow + SlideStage Approve-directive change documented",
+        "scripts/poll.mjs description corrected (actively drains /api/next-sprint, owned by the runner)",
+        "'Not yet built' trimmed to /api/qa and voice/TTS/ASR only"
+      ],
+      "narration": "Docs are current-state only, per convention. The readme now describes the injectable db layer that makes the database-touching routes testable without a live Postgres, documents both new endpoints with their auth posture, lists the three new db functions, and captures the client submission flow and the approve-directive change. We also corrected the poller description and trimmed the not-yet-built list down to just the Q-and-A endpoint and the voice stack."
+    },
+    {
+      "type": "info",
+      "title": "Integration & a real bug caught on the way",
+      "content": [
+        "Three branches each rewrote buildApp() with incompatible db-injection APIs; converged on decision-slide-submission as the canonical superset",
+        "next-sprint branch's test file dropped as a dead path — its route is fully covered by minutes.test.js",
+        "Build green (vite, 31 modules); server 11/11; client 54/54 — passed on first integration attempt, no fix loop",
+        "BUG FIXED: requireToken returned the Fastify reply (a thenable); call sites did `if (await requireToken(...)) return` — awaiting the reply resolved to undefined, so the 401 was sent but the handler body still ran. This was a live auth-bypass-of-side-effects on POST /api/briefings. Now returns a plain boolean; await dropped at both call sites"
+      ],
+      "narration": "On integration: all three lanes independently rewrote the buildApp factory with mutually incompatible database-injection signatures, so we converged on the decision-slide branch, which was the clean superset implementing both endpoints and the client wiring. We dropped the next-sprint lane's test file as redundant since its route is already covered. Build is green and both suites passed on the first integration attempt. Worth flagging one real bug the work uncovered and fixed: the bearer-token guard used to return the Fastify reply object, and the call sites awaited it — but a reply is thenable, so awaiting it resolved to undefined and the guard never short-circuited. The four-oh-one went out, but the handler body kept running, meaning an unauthorized post to the briefings endpoint still wrote to the database. The guard now returns a plain boolean and the await is gone, so the side effect is properly blocked."
+    },
+    {
+      "type": "decision",
+      "title": "Sprint 2 complete — approve or redirect the next sprint",
+      "content": [
+        "Delivered: POST /api/minutes (browser, no token), GET /api/next-sprint (bearer, atomic drain), decision-slide client wiring with confirm/error states",
+        "All tests green: server 11/11, client 54/54; build succeeds; scripts/poll.mjs untouched per scope",
+        "Proposed Sprint 3 (next steps): build POST /api/qa — server-side grounded Q&A via Opus 4.8 over the briefing artifacts, so the PI can ask follow-ups during the meeting",
+        "Then layer the voice path (TTS narration + ASR answers) on top of the now-complete text loop, keeping the live URL working without venue audio",
+        "Approve to queue Sprint 3 as proposed, or Redirect with your own directive"
+      ],
+      "narration": "That closes Sprint 2 — the human-direction loop is live end to end: a resolved decision in the browser records minutes and queues the next sprint, and the poller drains it exactly once. Everything is green and the poller file was left untouched as scoped. For next steps, the natural follow-on is Sprint 3: the grounded Q-and-A endpoint, server-side Opus over the briefing artifacts, so you can ask real follow-up questions in the meeting. After that we'd layer the voice path on top of the now-complete text loop. If that sounds right, approve and I'll queue it as Sprint 3; otherwise redirect me with whatever you'd like the next sprint to tackle."
+    }
+  ],
+  "artifacts": {
+    "specDeltas": "post-minutes-endpoint: zero functional delta; validation implemented as (briefingId==null || !outcome || directive==null) — intentionally accepts empty-string approve directives (spec described a blanket falsy check). get-next-sprint-endpoint: zero delta; claim SQL matches spec verbatim (UPDATE ... WHERE id=(SELECT id ... WHERE status='pending' ORDER BY id ASC FOR UPDATE SKIP LOCKED LIMIT 1) SET status='consumed' RETURNING goal, minutes). decision-slide-submission: zero functional delta; per spec the superseded MeetingView test 'does not call any write endpoint (no POST)' was deleted and replaced with 'does not POST /api/minutes when decision is null'. Cross-lane: three branches independently rewrote buildApp() with incompatible db-injection APIs (decision-slide buildApp({ db }); post-minutes opts.db spread; next-sprint flat { claimNextSprint }); integration converged on decision-slide as the canonical superset and dropped next-sprint's redundant incompatible test file.",
+    "gitLog": "3025c04 Merge sprint/get-next-sprint-endpoint\n9029360 Merge sprint/post-minutes-endpoint\nfde1497 Merge sprint/decision-slide-submission: Sprint 2 server (/api/minutes, /api/next-sprint) + decision-slide client wiring\n317f92b Close the human-direction loop: minutes + next-sprint endpoints + client wiring\nd9f5164 docs: remove time-bound language from useMeetingState description\ne4fdb7a docs: reflect confirmed GET /api/next-sprint state\n6a3594e Add POST /api/minutes: persist outcome + enqueue next sprint\n1d39d4a Add GET /api/next-sprint to drain the sprint queue\n(merge range e87a5f6..3025c04)",
+    "diffs": "server/src/app.js: buildApp() -> buildApp({ db = realDb } = {}); requireToken now returns a plain boolean (true=rejected) and is no longer awaited at call sites (fixed a thenable-reply auth-bypass on POST /api/briefings). Added POST /api/minutes (no token): validates briefingId/outcome/directive, rejects outcome not in approve|redirect, calls db.insertMinutes then db.enqueueSprint({ goal: directive, minutes: renderMinutes(...) }), returns 201 { minutesId, queuedSprintId }. Added GET /api/next-sprint (requireToken): db.claimNextSprint() -> 200 { goal, minutes } or 204. New helper renderMinutes({ outcome, directive, answers }) emits 'Outcome:', 'Directive:', and 'Answers:' lines.\nserver/src/db.js: added insertMinutes({ briefingId, outcome, payload }) INSERT INTO minutes RETURNING id; enqueueSprint({ goal, minutes }) INSERT INTO sprint_queue RETURNING id; claimNextSprint() atomic UPDATE ... FOR UPDATE SKIP LOCKED RETURNING goal, minutes.\nclient/src/MeetingView.jsx: Meeting now receives briefingId; useEffect on state.decision POSTs /api/minutes once (useRef StrictMode guard); submitStatus null|pending|confirmed|error; renders ConfirmedState (data-testid=minutes-confirmed) on 201, SubmitError (data-testid=minutes-error + minutes-retry) otherwise.\nclient/src/SlideStage.jsx: DecisionControls receives slide; Approve now calls onDecide('approve', slide.content.join('\\n')); Redirect unchanged.\nStat: 9 files changed, 648 insertions(+), 48 deletions(-).",
+    "testOutput": "Server (cd server && npm test, node --test): tests 11, pass 11, fail 0 — covers /api/minutes happy paths (approve, redirect, answers rendered 'Q1: A1', no-token-accepted), 400 validation (missing briefingId/null/missing outcome/missing directive/invalid 'maybe'/answers omitted/answers []), /api/next-sprint (401 no/wrong token, 204 empty, 200 claimed, oldest-first, exactly-once double-claim), plus existing /api/version. Client (cd client && npm test, vitest): Test Files 4 passed (4), Tests 54 passed (54) — Router, MeetingView (incl. decision-slide POST wiring + confirmed/error/retry banners + 'no POST when decision null'), SlideStage (Approve directive = content.join), useMeetingState (17, unchanged). Build: vite build succeeded, 31 modules, dist emitted.",
+    "docsChanged": "docs/README.md: rewrote the server/src/app.js entry for buildApp({ db } = {}) with injectable db layer and the requireToken boolean contract; documented POST /api/minutes (browser-facing, no token) and GET /api/next-sprint (bearer, atomic FOR UPDATE SKIP LOCKED claim); listed db.js functions insertMinutes/enqueueSprint/claimNextSprint; documented the MeetingView decision-POST effect + submitStatus state machine and the SlideStage Approve-directive change; corrected scripts/poll.mjs to 'actively drains /api/next-sprint, owned by the sprint runner'; trimmed 'Not yet built' to /api/qa and voice/TTS/ASR.",
+    "reviewerVerdicts": "post-minutes-endpoint: PASS — all 6 acceptance criteria met, 11 spec test cases pass + existing version test, payload deepEqual asserted, no auth guard confirmed. get-next-sprint-endpoint: PASS — all 5 acceptance criteria met, 6 new tests + version test (7/7), claim SQL verbatim-correct, oldest-first and exactly-once verified; pre-existing FST_ERR_REP_ALREADY_SENT 401 log warning noted as not introduced by this work. decision-slide-submission: PASS — all acceptance criteria met, 54/54 client tests, StrictMode ref guard correct, answers mapping per spec, superseded test deleted and replaced; one minor spec internal inconsistency (Requirements vs Design on hiding controls during 'pending') does not affect any numbered criterion, implementation follows the Design section."
+  }
+}
