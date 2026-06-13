@@ -23,7 +23,7 @@ Confirmed current state of the codebase, maintained by the in-lane docs agents
     drains exactly once) and returns `{ goal, minutes }`; `204` when none pending.
   - `requireToken(req, reply)` returns a plain boolean (`true` = rejected, 401 sent) so guards
     short-circuit with `if (requireToken(...)) return;` — it must NOT be awaited.
-  Tested by `server/test/version.test.js` and `server/test/minutes.test.js` (`cd server && npm test`).
+  Tested by `server/test/version.test.js`, `server/test/minutes.test.js`, and `server/test/qa.test.js` (`cd server && npm test`).
 - **server/src/index.js** — entrypoint: requires `DATABASE_URL`, `LAB_MEETING_TOKEN`, `PORT`
   (fails fast if missing), connects the DB, then listens.
 - **server/src/db.js** — Postgres via `pg`; requires `DATABASE_URL`, no fallback. Tables:
@@ -83,4 +83,4 @@ Confirmed current state of the codebase, maintained by the in-lane docs agents
 - **scripts/poll.mjs** — local loop-closer: polls `GET /api/next-sprint` (bearer token required) and
   drains the queue, launching the next sprint when a queued row is available; owned by the sprint runner.
 
-Not yet built: `/api/qa`, voice/TTS/ASR.
+Not yet built: `/api/qa` HTTP routes (the Q&A storage layer in `db.js` is built; the Fastify route handlers are in the server-routes lane), voice/TTS/ASR.
