@@ -59,3 +59,41 @@ export async function getBriefing(id) {
   const { rows } = await pool.query('SELECT * FROM briefings WHERE id = $1', [id]);
   return rows[0] ?? null;
 }
+
+// Persist a resolved meeting's decision. The full request body (outcome,
+// directive, answers) is stored as the payload for grounding/audit.
+export async function insertMinutes({ briefingId, outcome, payload }) {
+  const { rows } = await pool.query(
+    'INSERT INTO minutes (briefing_id, outcome, payload) VALUES ($1, $2, $3) RETURNING id',
+    [briefingId, outcome, payload]
+  );
+  return rows[0].id;
+}
+
+// Enqueue the next sprint. goal is the human's directive; minutes is the
+// rendered meeting summary that becomes the next sprint's standing direction.
+export async function enqueueSprint({ goal, minutes }) {
+  const { rows } = await pool.query(
+    'INSERT INTO sprint_queue (goal, minutes) VALUES ($1, $2) RETURNING id',
+    [goal, minutes]
+  );
+  return rows[0].id;
+}
+
+// Atomically claim the oldest pending sprint, marking it consumed so it is
+// drained exactly once even under concurrent pollers. Returns null when empty.
+export async function claimNextSprint() {
+  const { rows } = await pool.query(
+    `UPDATE sprint_queue
+        SET status = 'consumed'
+      WHERE id = (
+        SELECT id FROM sprint_queue
+         WHERE status = 'pending'
+         ORDER BY id ASC
+         FOR UPDATE SKIP LOCKED
+         LIMIT 1
+      )
+      RETURNING goal, minutes`
+  );
+  return rows[0] ?? null;
+}

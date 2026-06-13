@@ -15,14 +15,22 @@ vi.mock('../SlideStage.jsx', () => ({
   },
 }));
 
-const stateStub = {
-  currentIndex: 0,
-  answers: {},
-  decision: null,
-  continue: vi.fn(),
-  answer: vi.fn(),
-  decide: vi.fn(),
-};
+// The hook is mocked, so a test can choose the meeting state MeetingView sees by
+// reassigning `stateStub` before rendering. Default: a fresh meeting with no
+// decision recorded (decision: null) — the loading/error/wiring tests rely on
+// this default so they never trigger the minutes POST.
+function freshState() {
+  return {
+    currentIndex: 0,
+    answers: {},
+    decision: null,
+    continue: vi.fn(),
+    answer: vi.fn(),
+    decide: vi.fn(),
+  };
+}
+
+let stateStub = freshState();
 
 vi.mock('../useMeetingState.js', () => ({
   useMeetingState: (slides) => {
@@ -38,9 +46,33 @@ function mockFetchOnce(impl) {
   global.fetch = vi.fn(impl);
 }
 
+// A briefing whose final slide is a decision slide, suitable for exercising the
+// minutes-submission flow.
+const decisionBriefing = {
+  sprintId: 'sprint-x',
+  goal: 'demo goal',
+  slides: [
+    { type: 'info', title: 'Intro', content: ['a'], narration: '' },
+    {
+      type: 'decision',
+      title: 'Decide',
+      content: ['ship the loop', 'then iterate'],
+      narration: '',
+    },
+  ],
+};
+
+// Returns the parsed body of the POST /api/minutes call, or null if none.
+function minutesPostBody(fetchMock) {
+  const call = fetchMock.mock.calls.find((c) => c[0] === '/api/minutes');
+  if (!call) return null;
+  return JSON.parse(call[1].body);
+}
+
 beforeEach(() => {
   lastSlideStageProps = undefined;
   lastSlidesPassedToHook = undefined;
+  stateStub = freshState();
 });
 
 afterEach(() => {
@@ -150,19 +182,162 @@ describe('MeetingView', () => {
     expect(fetchMock).toHaveBeenCalledWith('/api/briefings/2');
   });
 
-  it('does not call any write endpoint (no POST)', async () => {
+  it('does not POST /api/minutes when decision is null', async () => {
+    // Default stateStub has decision: null — the effect must not fire a POST.
     const fetchMock = vi.fn(async () => ({ ok: true, json: async () => sprint1 }));
     global.fetch = fetchMock;
     render(<MeetingView id={1} />);
     await waitFor(() => screen.getByTestId('slide-stage'));
 
-    for (const call of fetchMock.mock.calls) {
-      const opts = call[1];
-      expect(opts?.method ?? 'GET').toBe('GET');
+    const minutesCall = fetchMock.mock.calls.find((c) => c[0] === '/api/minutes');
+    expect(minutesCall).toBeUndefined();
+  });
+});
+
+// A fetch mock that serves the briefing GET and records/answers the minutes POST.
+// `postStatus` is the HTTP status the minutes POST resolves to (default 201).
+// `postThrows` makes the minutes POST reject (network error).
+function mockBriefingAndMinutes({ briefing, postStatus = 201, postThrows = false } = {}) {
+  const fetchMock = vi.fn(async (url, opts) => {
+    if (url === '/api/minutes') {
+      if (postThrows) throw new Error('network down');
+      return { ok: postStatus === 201, status: postStatus };
     }
-    expect(fetchMock).not.toHaveBeenCalledWith(
-      '/api/minutes',
-      expect.anything()
-    );
+    return { ok: true, json: async () => briefing };
+  });
+  global.fetch = fetchMock;
+  return fetchMock;
+}
+
+describe('MeetingView — minutes submission', () => {
+  it('POSTs /api/minutes once with the approve directive from slide content', async () => {
+    stateStub = {
+      ...freshState(),
+      currentIndex: 1,
+      decision: { outcome: 'approve', direction: 'ship the loop\nthen iterate' },
+    };
+    const fetchMock = mockBriefingAndMinutes({ briefing: decisionBriefing });
+
+    render(<MeetingView id={42} />);
+    await screen.findByTestId('minutes-confirmed');
+
+    const calls = fetchMock.mock.calls.filter((c) => c[0] === '/api/minutes');
+    expect(calls).toHaveLength(1);
+    expect(minutesPostBody(fetchMock)).toEqual({
+      briefingId: 42,
+      outcome: 'approve',
+      directive: 'ship the loop\nthen iterate',
+      answers: [],
+    });
+  });
+
+  it('POSTs the human-typed directive on redirect', async () => {
+    stateStub = {
+      ...freshState(),
+      currentIndex: 1,
+      decision: { outcome: 'redirect', direction: 'focus on X' },
+    };
+    const fetchMock = mockBriefingAndMinutes({ briefing: decisionBriefing });
+
+    render(<MeetingView id={7} />);
+    await screen.findByTestId('minutes-confirmed');
+
+    const body = minutesPostBody(fetchMock);
+    expect(body.outcome).toBe('redirect');
+    expect(body.directive).toBe('focus on X');
+  });
+
+  it('includes captured question answers in the POST body', async () => {
+    stateStub = {
+      ...freshState(),
+      currentIndex: 1,
+      answers: { 0: 'my answer' },
+      decision: { outcome: 'approve', direction: 'go' },
+    };
+    const fetchMock = mockBriefingAndMinutes({ briefing: decisionBriefing });
+
+    render(<MeetingView id={1} />);
+    await screen.findByTestId('minutes-confirmed');
+
+    expect(minutesPostBody(fetchMock).answers).toEqual([
+      { title: 'Intro', answer: 'my answer' },
+    ]);
+  });
+
+  it('sends answers: [] when there are no captured answers', async () => {
+    stateStub = {
+      ...freshState(),
+      currentIndex: 1,
+      decision: { outcome: 'approve', direction: 'go' },
+    };
+    const fetchMock = mockBriefingAndMinutes({ briefing: decisionBriefing });
+
+    render(<MeetingView id={1} />);
+    await screen.findByTestId('minutes-confirmed');
+
+    expect(minutesPostBody(fetchMock).answers).toEqual([]);
+  });
+
+  it('sends directive: "" when the decision slide has empty content (approve)', async () => {
+    const emptyContentBriefing = {
+      ...decisionBriefing,
+      slides: [
+        { type: 'decision', title: 'Decide', content: [], narration: '' },
+      ],
+    };
+    stateStub = {
+      ...freshState(),
+      currentIndex: 0,
+      decision: { outcome: 'approve', direction: '' },
+    };
+    const fetchMock = mockBriefingAndMinutes({ briefing: emptyContentBriefing });
+
+    render(<MeetingView id={1} />);
+    await screen.findByTestId('minutes-confirmed');
+
+    const body = minutesPostBody(fetchMock);
+    expect(body.directive).toBe('');
+    expect(body.outcome).toBe('approve');
+  });
+
+  it('shows the confirmation state and hides the slide stage on 201', async () => {
+    stateStub = {
+      ...freshState(),
+      currentIndex: 1,
+      decision: { outcome: 'approve', direction: 'go' },
+    };
+    mockBriefingAndMinutes({ briefing: decisionBriefing, postStatus: 201 });
+
+    render(<MeetingView id={1} />);
+    await screen.findByTestId('minutes-confirmed');
+
+    expect(screen.queryByTestId('slide-stage')).toBeNull();
+  });
+
+  it('shows an error + retry and keeps the slide stage on a non-201 response', async () => {
+    stateStub = {
+      ...freshState(),
+      currentIndex: 1,
+      decision: { outcome: 'approve', direction: 'go' },
+    };
+    mockBriefingAndMinutes({ briefing: decisionBriefing, postStatus: 400 });
+
+    render(<MeetingView id={1} />);
+    await screen.findByTestId('minutes-error');
+
+    expect(screen.getByTestId('minutes-retry')).toBeTruthy();
+    expect(screen.getByTestId('slide-stage')).toBeTruthy();
+  });
+
+  it('shows the error state on a network failure', async () => {
+    stateStub = {
+      ...freshState(),
+      currentIndex: 1,
+      decision: { outcome: 'approve', direction: 'go' },
+    };
+    mockBriefingAndMinutes({ briefing: decisionBriefing, postThrows: true });
+
+    render(<MeetingView id={1} />);
+    await screen.findByTestId('minutes-error');
   });
 });
