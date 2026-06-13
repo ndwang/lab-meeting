@@ -6,15 +6,23 @@ Confirmed current state of the codebase, maintained by the in-lane docs agents
 
 ## Current state
 
-- **server/src/app.js** — `buildApp()`: Fastify routes (`GET /api/health`; `GET /api/version`
+- **server/src/app.js** — `buildApp(opts = {})`: Fastify routes (`GET /api/health`; `GET /api/version`
   returns `{ version }` read from the root `package.json` at module load, no DB/no auth;
-  `POST /api/briefings` with bearer token, `GET /api/briefings[/:id]`) + built-client serving with
-  SPA fallback. No DB connect, no listen, so routes are testable via `app.inject()`.
-  Tested by `server/test/version.test.js` (`cd server && npm test`).
+  `POST /api/briefings` with bearer token, `GET /api/briefings[/:id]`; `POST /api/minutes`
+  browser-facing with NO bearer token — validates `{ briefingId, outcome, directive, answers? }`
+  (400 on falsy briefingId/outcome/directive or an outcome other than `approve`/`redirect`),
+  persists a `minutes` row with the full body as payload, enqueues a `sprint_queue` row with
+  `goal = directive` and a rendered `minutes` text (outcome + directive + answers), returns
+  `{ minutesId, queuedSprintId }` with 201) + built-client serving with SPA fallback. No DB
+  connect, no listen, so routes are testable via `app.inject()`. `opts.db` overrides individual
+  db helpers in tests (spread over the real `db.js` module) so routes run without Postgres.
+  Tested by `server/test/version.test.js` and `server/test/minutes.test.js` (`cd server && npm test`).
 - **server/src/index.js** — entrypoint: requires `DATABASE_URL`, `LAB_MEETING_TOKEN`, `PORT`
   (fails fast if missing), connects the DB, then listens.
 - **server/src/db.js** — Postgres via `pg`; requires `DATABASE_URL`, no fallback. Tables:
-  `briefings`, `minutes`, `sprint_queue`.
+  `briefings`, `minutes`, `sprint_queue`. Helpers: `insertBriefing`, `listBriefings`,
+  `getBriefing`, `insertMinutes({ briefingId, outcome, payload })`,
+  `insertSprintQueue({ goal, minutes })` (status defaults to `pending`).
 - **server/src/env.js** — `requireEnv(name)`: fail-fast env lookup, no default values.
 - **client/** — React 18 + Vite 6 SPA with hash-based client-side routing (no router dependency).
   - `src/main.jsx` mounts `src/Router.jsx`.
@@ -51,4 +59,4 @@ Confirmed current state of the codebase, maintained by the in-lane docs agents
   `useMeetingState.test.js` — exercised against `briefings/sprint-1.json`.
 - **scripts/poll.mjs** — local loop-closer stub (drains `/api/next-sprint`, not yet implemented).
 
-Not yet built: `/api/minutes`, `/api/next-sprint`, `/api/qa`, voice/TTS/ASR, next-sprint wiring.
+Not yet built: `/api/next-sprint`, `/api/qa`, voice/TTS/ASR, next-sprint client wiring.

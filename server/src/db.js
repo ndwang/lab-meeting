@@ -59,3 +59,22 @@ export async function getBriefing(id) {
   const { rows } = await pool.query('SELECT * FROM briefings WHERE id = $1', [id]);
   return rows[0] ?? null;
 }
+
+// Persist a resolved meeting. `payload` is the full request body. The route
+// handler guarantees briefingId and outcome are truthy before calling here.
+export async function insertMinutes({ briefingId, outcome, payload }) {
+  const { rows } = await pool.query(
+    'INSERT INTO minutes (briefing_id, outcome, payload) VALUES ($1, $2, $3) RETURNING id',
+    [briefingId, outcome, payload]
+  );
+  return rows[0].id;
+}
+
+// Enqueue the next sprint. `status` defaults to 'pending' via the schema DDL.
+export async function insertSprintQueue({ goal, minutes }) {
+  const { rows } = await pool.query(
+    'INSERT INTO sprint_queue (goal, minutes) VALUES ($1, $2) RETURNING id',
+    [goal, minutes]
+  );
+  return rows[0].id;
+}

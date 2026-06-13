@@ -6,7 +6,7 @@ import { existsSync, readFileSync } from 'node:fs';
 import Fastify from 'fastify';
 import cors from '@fastify/cors';
 import fastifyStatic from '@fastify/static';
-import { insertBriefing, listBriefings, getBriefing } from './db.js';
+import * as realDb from './db.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const clientDist = path.resolve(__dirname, '../../client/dist');
@@ -18,7 +18,24 @@ const { version } = JSON.parse(
   readFileSync(path.resolve(__dirname, '../../package.json'), 'utf8'),
 );
 
-export async function buildApp() {
+// Render a human-readable `minutes` text for the queued sprint from a resolved
+// meeting: the outcome, the directive (next sprint goal), and any captured
+// question-slide answers as `title: answer` lines.
+function renderMinutesText({ outcome, directive, answers }) {
+  const lines = [`Outcome: ${outcome}`, `Directive: ${directive}`];
+  if (Array.isArray(answers) && answers.length > 0) {
+    lines.push('Answers:');
+    for (const { title, answer } of answers) {
+      lines.push(`${title}: ${answer}`);
+    }
+  }
+  return lines.join('\n');
+}
+
+// `opts.db` overrides individual db helpers in tests (so app.inject() can run
+// without a real Postgres connection). Production calls buildApp() with no args.
+export async function buildApp(opts = {}) {
+  const db = { ...realDb, ...opts.db };
   const app = Fastify({ logger: true });
   await app.register(cors, { origin: true });
 
@@ -45,7 +62,7 @@ export async function buildApp() {
     if (!payload || !Array.isArray(payload.slides)) {
       return reply.code(400).send({ error: 'briefing must include a slides[] array' });
     }
-    const id = await insertBriefing({
+    const id = await db.insertBriefing({
       sprintId: payload.sprintId,
       goal: payload.goal,
       payload,
@@ -54,12 +71,39 @@ export async function buildApp() {
     return reply.code(201).send({ briefingId: id });
   });
 
-  app.get('/api/briefings', async () => ({ briefings: await listBriefings() }));
+  app.get('/api/briefings', async () => ({ briefings: await db.listBriefings() }));
 
   app.get('/api/briefings/:id', async (req, reply) => {
-    const row = await getBriefing(req.params.id);
+    const row = await db.getBriefing(req.params.id);
     if (!row) return reply.code(404).send({ error: 'not found' });
     return row.payload ?? row;
+  });
+
+  // The browser POSTs here when the human resolves a meeting's decision slide.
+  // No bearer token — this is browser-facing and the SPA holds no token. The
+  // call persists the meeting outcome, then enqueues the next sprint.
+  app.post('/api/minutes', async (req, reply) => {
+    const body = req.body ?? {};
+    if (!body.briefingId || !body.outcome || !body.directive) {
+      return reply.code(400).send({ error: 'briefingId, outcome, and directive are required' });
+    }
+    if (body.outcome !== 'approve' && body.outcome !== 'redirect') {
+      return reply.code(400).send({ error: 'outcome must be approve or redirect' });
+    }
+
+    const minutesId = await db.insertMinutes({
+      briefingId: body.briefingId,
+      outcome: body.outcome,
+      payload: body,
+    });
+
+    const queuedSprintId = await db.insertSprintQueue({
+      goal: body.directive,
+      minutes: renderMinutesText(body),
+    });
+
+    req.log.info({ minutesId, queuedSprintId, outcome: body.outcome }, 'minutes recorded');
+    return reply.code(201).send({ minutesId, queuedSprintId });
   });
 
   // Built SPA with history-API fallback (client routing, not a compat fallback).
