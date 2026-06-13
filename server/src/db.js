@@ -27,6 +27,17 @@ CREATE TABLE IF NOT EXISTS sprint_queue (
   status      TEXT NOT NULL DEFAULT 'pending',
   created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+
+-- Live Q&A channel: the browser posts a question, the host agent (attendant
+-- daemon) claims it and posts an answer back, the browser polls for it.
+CREATE TABLE IF NOT EXISTS qa (
+  id          SERIAL PRIMARY KEY,
+  briefing_id INTEGER REFERENCES briefings(id),
+  question    TEXT NOT NULL,
+  answer      TEXT,
+  status      TEXT NOT NULL DEFAULT 'pending',
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+);
 `;
 
 let pool;
@@ -96,4 +107,54 @@ export async function claimNextSprint() {
       RETURNING goal, minutes`
   );
   return rows[0] ?? null;
+}
+
+// Insert a browser-posted follow-up question as a pending Q&A row. Returns the
+// new row id. created_at is server-stamped.
+export async function insertQuestion({ briefingId, question }) {
+  const { rows } = await pool.query(
+    "INSERT INTO qa (briefing_id, question, status) VALUES ($1, $2, 'pending') RETURNING id",
+    [briefingId, question]
+  );
+  return rows[0].id;
+}
+
+// Atomically claim the oldest pending question, marking it 'claimed' so the
+// host agent picks up each question exactly once even under concurrent pollers.
+// Returns { id, briefingId, question } or null when none are pending.
+export async function claimPendingQuestion() {
+  const { rows } = await pool.query(
+    `UPDATE qa
+        SET status = 'claimed'
+      WHERE id = (
+        SELECT id FROM qa
+         WHERE status = 'pending'
+         ORDER BY id ASC
+         FOR UPDATE SKIP LOCKED
+         LIMIT 1
+      )
+      RETURNING id, briefing_id, question`
+  );
+  const row = rows[0];
+  if (!row) return null;
+  return { id: row.id, briefingId: row.briefing_id, question: row.question };
+}
+
+// Record the host agent's answer and mark the question answered. Returns true
+// if a row was updated, false if the id did not match any row.
+export async function answerQuestion({ id, answer }) {
+  const { rowCount } = await pool.query(
+    "UPDATE qa SET answer = $2, status = 'answered' WHERE id = $1",
+    [id, answer]
+  );
+  return rowCount > 0;
+}
+
+// Fetch the full Q&A thread for a briefing, oldest-first.
+export async function listQAForBriefing(briefingId) {
+  const { rows } = await pool.query(
+    'SELECT id, question, answer, status, created_at FROM qa WHERE briefing_id = $1 ORDER BY id ASC',
+    [briefingId]
+  );
+  return rows;
 }
