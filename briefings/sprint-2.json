@@ -1,0 +1,123 @@
+{
+  "sprintId": "sprint-2",
+  "goal": "Build the meeting-view MVP in client/: a page-gated, Zoom-style meeting that fetches a briefing from GET /api/briefings/:id and presents one slide at a time on a slide stage, with info/question/decision turn-taking and a progress indicator.",
+  "slides": [
+    {
+      "type": "info",
+      "title": "Lane 1 — Hash router + landing links",
+      "content": [
+        "Spec: client-router — all 6 acceptance criteria met, reviewer PASS",
+        "client/src/Router.jsx: #/ -> BriefingList, #/meeting/:id -> MeetingView",
+        "Defensive parse: non-integer id redirects to #/; unknown hash falls through to list",
+        "App.jsx wraps each briefing row in <a href='#/meeting/{id}'>; Back link above the meeting view",
+        "Delta vs spec: zero — no router package added; routing logic lives in Router.jsx imported by main.jsx",
+        "Delta vs first attempt: build had hard-failed on a missing MeetingView import; fixed by adding the shell + wiring vitest"
+      ],
+      "narration": "First lane: the client-side router. We went with hash routing, so no router dependency and no server changes. The route table is simple — hash slash goes to the briefing list, and hash slash meeting slash id goes to the meeting view, with the id parsed as an integer. The parsing is deliberately defensive: a non-integer id redirects back to the list, and any unrecognised hash just falls through to the list rather than crashing. On the landing page, every briefing row is now an anchor linking to its meeting at hash slash meeting slash id, and there's a Back link above the meeting view. The implementation matches the spec exactly — six of six criteria, reviewer pass, and no router package added. Worth noting one stumble: the first build attempt hard-failed because Router imported a MeetingView file that didn't exist yet, so we added a minimal shell and wired up vitest; integration later swapped that shell for the real wired page."
+    },
+    {
+      "type": "info",
+      "title": "Lane 2 — Meeting view page",
+      "content": [
+        "Spec: meeting-view-page — all 6 acceptance criteria met, reviewer PASS (10 tests)",
+        "client/src/MeetingView.jsx: fetches GET /api/briefings/:id on mount, re-fetches on id change",
+        "States: loading (data-testid=loading), error (data-testid=error, text contains 'not found'/'error'), ok",
+        "Renders sprint header (sprintId, goal) above the stage; drives useMeetingState(briefing.slides)",
+        "Wires SlideStage with all 6 props: slides, currentIndex, answers, onContinue, onAnswer, onDecide",
+        "Delta vs spec: zero — no POST, no write endpoint; a cancelled-flag guards stale fetches",
+        "Scope note: malformed payload (no slides array) is treated as an error state"
+      ],
+      "narration": "Second lane: the meeting view page itself. MeetingView takes an id prop, fetches the briefing from get slash api slash briefings slash id on mount, and re-fetches if the id changes. It has three states — loading, error, and ok — each with the test ids the spec asked for, and the error copy contains both 'not found' and 'error' so either matcher hits. Once the briefing loads, it renders the sprint header — the sprint id and the goal — above the stage, then hands the slides to the page-gating hook and renders the slide stage with all six props wired exactly as specified. There are no writes anywhere; a cancelled flag guards against a stale fetch landing after the id changed. The only judgment call: a malformed payload missing a slides array is treated as an error rather than rendering an empty stage. Ten tests, all green, reviewer pass."
+    },
+    {
+      "type": "info",
+      "title": "Lane 3 — Slide stage renderer",
+      "content": [
+        "Spec: slide-stage-renderer — all 8 acceptance criteria met, reviewer PASS (12 tests)",
+        "client/src/SlideStage.jsx: purely presentational, default export, no fetch, no data state",
+        "Renders title / content <li> bullets / narration with data-testid slide-title|slide-content|slide-narration",
+        "Progress indicator 'Slide N of M' (data-testid=slide-progress)",
+        "info -> Continue; question -> textarea+Submit (disabled until non-empty, sends trimmed text); decision -> Approve + Redirect (Redirect disabled until direction typed)",
+        "Boundaries: empty/out-of-range slide -> 'No slide' placeholder; unknown type -> content only + console.warn",
+        "Delta vs spec: zero"
+      ],
+      "narration": "Third lane: the slide stage renderer. This is the purely presentational piece — no fetching, no data state, all turn-taking flows through callbacks it receives as props. It renders the slide title, the content bullets as list items, and the presenter narration, each tagged with the test ids the spec named, plus a 'Slide N of M' progress indicator. The controls are driven by the slide type: an info slide shows a Continue button; a question slide shows a textarea and a Submit button that stays disabled until you type something and sends the trimmed text; and the decision slide shows Approve plus a Redirect that's disabled until you've typed a direction. Edge cases are handled cleanly — an empty or out-of-range slide shows a 'No slide' placeholder, and an unrecognised slide type renders just the content and logs a warning rather than throwing. Eight criteria, twelve tests, zero delta."
+    },
+    {
+      "type": "info",
+      "title": "Lane 4 — Page-gating state machine",
+      "content": [
+        "Spec: meeting-state-machine — all 9 acceptance criteria met, reviewer PASS (17 tests)",
+        "client/src/useMeetingState.js: returns { currentIndex, answers, decision, continue, answer, decide }",
+        "continue() advances only on info slides; no-op elsewhere",
+        "answer(text) hard-gates question slides: records answers[index] then advances; answer('')/whitespace is a no-op",
+        "decide(outcome, direction) sets decision and does NOT advance (decision slide is terminal)",
+        "Index clamped at slides.length-1; empty/undefined slides are safe no-ops; only useState/useCallback used",
+        "Delta vs spec: zero — no fetch, no storage, all state client-side"
+      ],
+      "narration": "Fourth lane: the page-gating state machine — the rules that decide when the meeting can move forward. It's a React hook returning the current index, the captured answers, the decision, and three actions. Continue only advances on info slides and is a no-op anywhere else. Answer hard-gates the question slides — it records your answer by slide index and advances, but an empty or whitespace-only answer does nothing, so you genuinely can't skip past a question. Decide records the outcome on the terminal decision slide and deliberately does not advance, because that slide closes the meeting. The index is clamped at the last slide, empty or undefined slide arrays are safe no-ops, and the whole thing uses only useState and useCallback — no fetch, no storage, everything stays in client state. Nine criteria, seventeen tests, zero delta from the spec."
+    },
+    {
+      "type": "info",
+      "title": "Lane 5 — Client Vitest setup + suite",
+      "content": [
+        "Spec: client-test-setup — all 7 acceptance criteria met, reviewer PASS",
+        "client/package.json: 'test': 'vitest run'; devDeps vitest, @testing-library/react+user-event+jest-dom, jsdom",
+        "client/vitest.config.js: jsdom environment, globals:true, react plugin, setup.js registers jest-dom matchers",
+        "Tests cover SlideStage renderer + useMeetingState gating, driven by the real briefings/sprint-1.json fixture",
+        "Lane shipped placeholder SlideStage/useMeetingState (named exports) to verify in isolation",
+        "Delta vs spec: those placeholders collided with canonical lanes; integrator dropped them, kept the unique useMeetingState.test.js",
+        "Server test untouched: cd server && npm test -> 1 pass, 0 fail"
+      ],
+      "narration": "Fifth lane: the client test harness. This added the test script and dev dependencies to the client package, a vitest config running in jsdom with globals on, and a setup file that registers the jest-dom matchers. The suites cover both the renderer and the gating state machine, driven by the real sprint-one briefing as a fixture. One honest wrinkle here: to make its tests runnable in isolation, this lane shipped its own placeholder copies of SlideStage and useMeetingState as named exports — which would have collided with, and were incompatible with, the canonical components from lanes three and four. The integrator resolved that by dropping the placeholders in favour of the real implementations and keeping this lane's unique state-machine test. The existing server test was never touched and still passes, one pass, zero fail."
+    },
+    {
+      "type": "info",
+      "title": "Integration & test results",
+      "content": [
+        "All 5 branches merged to main on the first checks pass — no fix-loop iterations needed",
+        "Canonical-owner strategy resolved heavy overlap (every lane scaffolded package.json/vitest config/docs)",
+        "client/MeetingView.jsx: kept the wired version over client-router's shell stub",
+        "client/SlideStage.jsx + useMeetingState.js: kept canonical lanes over client-test-setup placeholders",
+        "Client: 5 test files, 55 tests passing (incl. a duplicate useMeetingState suite at two paths)",
+        "Server: node --test -> 1 test, 1 pass, 0 fail. npm run build: vite OK in ~190ms",
+        "Commit range e651bd2..2c61d36"
+      ],
+      "narration": "Pulling it together: all five branches merged into main on the first checks pass — no fix-loop iterations were needed, build and tests were green on attempt one. The lanes overlapped heavily because each one independently scaffolded the package file, the vitest config, and the docs, and several reimplemented the same components to test in isolation. The integrator handled that by picking one canonical owner per file: the wired MeetingView over the router's shell stub, and the real SlideStage and state hook over the test lane's placeholders. The result is fifty-five client tests passing across five files — note there's a harmless duplicate state-machine suite living at two paths, which I'd flag as a cleanup. The server test still passes, one of one, and the build is green in about a hundred and ninety milliseconds. End to end: meeting slash id is reachable, the landing list links each briefing, and one slide shows at a time with info-continue, required answers, and an approve-or-redirect decision — answers and decision stay in client state only, honoring every scope limit."
+    },
+    {
+      "type": "info",
+      "title": "Docs changed",
+      "content": [
+        "docs/README.md current-state section updated by the in-lane docs agents",
+        "Heading 'Current state (kickoff)' -> 'Current state' (stale label removed)",
+        "client/ entry expanded: hash router, App.jsx links, MeetingView fetch+states",
+        "Added entries for SlideStage (props, data-testids, per-type controls) and useMeetingState (signature, gate rules, client-state-only)",
+        "Added styles.css class list and client-tests entry (vitest/jsdom, fixture path, run command)",
+        "'Not yet built' rewritten: /api/minutes, /api/next-sprint, /api/qa, voice/TTS/ASR, next-sprint wiring",
+        "Single doc file, no contradictions, no history notes (docs-maintainer convention)"
+      ],
+      "narration": "On docs: the in-lane docs agents kept docs slash README current as the work landed, and the integrator did a final reconciliation pass. The stale 'kickoff' label in the heading is gone. The client section now describes the hash router, the landing-list links, and the meeting view's fetch and loading-error-ok states, with dedicated entries for the slide stage — its props, test ids, and per-type controls — and the state hook — its signature, gate rules, and client-state-only constraint. There's a styles entry listing the new CSS classes and a client-tests entry naming the vitest-jsdom setup, the fixture path, and the run command. The 'not yet built' list was rewritten to name only what's genuinely still ahead: minutes, next-sprint, the Q-and-A endpoint, voice, and the next-sprint wiring. It's a single doc file with no contradictions and no history notes, per the docs-maintainer convention."
+    },
+    {
+      "type": "decision",
+      "title": "Decision: approve and pick next sprint",
+      "content": [
+        "Sprint-2 complete: meeting-view MVP shipped, tested (55 client tests), documented, merged to main",
+        "Reviewer verdicts: 5/5 lanes PASS; no escalations, no unresolved items, no open questions",
+        "Proposed next (Sprint 3): close the human-direction loop — POST /api/minutes on decision resolve + GET /api/next-sprint + scripts/poll.mjs",
+        "Cleanup candidate to fold in: dedupe the two useMeetingState test files (src/ vs __tests__/) into one canonical suite",
+        "Approve to proceed with the minutes/next-sprint loop, or Redirect to a different next work item"
+      ],
+      "narration": "That wraps Sprint two. The meeting-view MVP is shipped, tested with fifty-five client tests, documented, and merged to main — all five lanes passed review, with no escalations, no unresolved items, and no open questions blocking you. For the next sprint I'd propose closing the human-direction loop from the HTTP contract: writing minutes via post slash api slash minutes when you resolve a decision slide, adding get slash api slash next-sprint, and implementing the local poller so your direction in the meeting becomes the next sprint's input. I'd also fold in one small cleanup — there are two copies of the state-machine test at different paths, and we should collapse them into one canonical suite. If that plan sounds right, approve to proceed; otherwise redirect me and tell me precisely what you'd rather tackle next, and I'll re-plan around it."
+    }
+  ],
+  "artifacts": {
+    "specDeltas": "client-router (PASS, specWrong:false): delta NONE — 6/6 AC. #/meeting/42 renders MeetingView (Router.jsx parses integer id); #/ and empty hash render BriefingList; each row is <a href='#/meeting/{id}'> (App.jsx); Back link href='#/'; no router package; Router.jsx imported by main.jsx. First build attempt hard-failed (Router imported missing MeetingView.jsx) — fixed by adding shell + vitest config. meeting-view-page (PASS): delta NONE — 6/6 AC, 10 tests. Fetches GET /api/briefings/:id on mount (id in useEffect deps); loading/error/ok with data-testid; error text 'Briefing not found, or an error occurred loading it.' contains both 'not found' and 'error'; drives useMeetingState(briefing.slides); wires SlideStage with all 6 props; no POST. slide-stage-renderer (PASS): delta NONE — 8/8 AC, 12 tests. Presentational; title/content<li>/narration data-testids; 'Slide N of M' progress; info=Continue, question=textarea+Submit(disabled empty, trimmed), decision=Approve onDecide('approve','')+Redirect(disabled empty); empty/out-of-range='No slide'; unknown type=content-only+console.warn. meeting-state-machine (PASS): delta NONE — 9/9 AC, 17 tests. Returns {currentIndex, answers, decision, continue, answer, decide}; continue() advances info only; answer(text) gates question, records by index, no-op on ''/whitespace; decide(outcome,direction) sets decision without advancing; index clamped at length-1; only useState/useCallback. client-test-setup (PASS): delta NONE for canonical deliverables — 7/7 AC. Added 'test':'vitest run', devDeps (vitest@^2.1.8, @testing-library/react@^16.1.0, user-event@^14.5.2, jsdom@^25.0.1), vitest.config.js (jsdom, globals:true). Shipped placeholder SlideStage/useMeetingState (named exports) for isolation; integrator dropped them for the canonical lanes, kept unique useMeetingState.test.js.",
+    "gitLog": "2c61d36 Regenerate client package-lock against merged dependencies\n0a0798f Merge sprint/client-test-setup: client vitest harness\nf2777d5 Merge sprint/meeting-view-page: wired meeting page (fetch + state + stage)\nb88aeb4 Merge sprint/meeting-state-machine: page-gating state machine\n74a4a5d Merge sprint/slide-stage-renderer: single-slide stage renderer\n23b2863 Merge sprint/client-router: hash routing + meeting view shell\n50ab28e docs: reflect confirmed client-router state in docs/README.md\n303421f Fix router lane build + test setup: add MeetingView, wire vitest\nc82964d docs: update to confirmed sprint-1 slide-stage-renderer state\n89477ec docs: update README to reflect confirmed client test setup state\n302759c docs: update README to reflect confirmed MeetingView implementation\n532b986 Add SlideStage renderer with per-type controls and Vitest tests\nd40cd38 Add MeetingView page: fetch briefing, loading/error states, wire SlideStage + useMeetingState\n76db1e0 Add Vitest client test setup covering SlideStage + useMeetingState\n3874443 Add hash-based client router for landing list and meeting view\n074a4ed Add useMeetingState page-gating hook\ne651bd2 Harden /sprint arg parsing and reporter; archive sprint-1 artifacts\n\nIntegration commit range: e651bd2..2c61d36. All 5 reviewed branches merged --no-ff into main on the first checks pass; worktrees removed (meeting-view-page needed --force).",
+    "diffs": "git diff --stat e651bd2..2c61d36 (17 files, +3607/-31):\n client/package-lock.json                     | 2451 ++   (regenerated against merged devDeps)\n client/package.json                          |   10     (+ 'test':'vitest run'; + vitest, @testing-library/{jest-dom,react,user-event}, jsdom)\n client/src/App.jsx                           |   14     (BriefingList default export; rows are <a href='#/meeting/{id}'>)\n client/src/MeetingView.jsx                   |   95 +   (fetch GET /api/briefings/:id; loading/error/ok; sprint header; useMeetingState + SlideStage wiring)\n client/src/Router.jsx                        |   53 +   (parseHash; #/ -> BriefingList, #/meeting/:id -> MeetingView; Back link; non-int id redirect)\n client/src/SlideStage.jsx                    |  129 +   (InfoControls/QuestionControls/DecisionControls; progress; data-testids; placeholder + console.warn)\n client/src/__tests__/MeetingView.test.jsx    |  168 +   (10 tests; SlideStage + useMeetingState mocked)\n client/src/__tests__/Router.test.jsx         |   86 +   (7 tests)\n client/src/__tests__/SlideStage.test.jsx     |  183 +   (12 tests, default-export suite)\n client/src/__tests__/setup.js                |    1 +   (import '@testing-library/jest-dom')\n client/src/__tests__/useMeetingState.test.js |  100 +   (9 tests, from client-test-setup lane)\n client/src/main.jsx                          |    4     (mounts Router)\n client/src/styles.css                        |   33     (.back, .slide-stage, .slide-progress, .slide-title, .slide-content, .slide-narration, .slide-controls, .decision-actions)\n client/src/useMeetingState.js                |   69 +   (page-gating hook; useState/useCallback only)\n client/src/useMeetingState.test.js           |  190 +   (17 tests, from meeting-state-machine lane)\n client/vitest.config.js                      |   14 +   (jsdom, globals:true, react plugin, setupFiles ./src/__tests__/setup.js)\n docs/README.md                               |   38     (current-state rewrite)\nNote: useMeetingState is tested at two paths (src/useMeetingState.test.js, 17 tests; src/__tests__/useMeetingState.test.js, 9 tests) — a benign duplicate flagged for next-sprint cleanup.",
+    "testOutput": "npm run build: vite build OK (dist/index.html + assets, ~190ms).\nClient (cd client && npm test -> vitest run): Test Files 5 passed (5), Tests 55 passed (55) — useMeetingState.test.js (17) + __tests__/useMeetingState.test.js (9) + Router.test.jsx (7) + MeetingView.test.jsx (10) + __tests__/SlideStage.test.jsx (12).\nServer (cd server && npm test -> node --test): tests 1, pass 1, fail 0.\nIntegration: green on attempt 1, no fix-loop iterations.",
+    "docsChanged": "docs/README.md — current-state section. Heading 'Current state (kickoff)' -> 'Current state'. client/ entry expanded into sub-bullets: main.jsx mounts Router; Router.jsx hash dispatch (#/ -> BriefingList, #/meeting/:id -> MeetingView, non-int id redirects); App.jsx BriefingList default export with #/meeting/{id} links; MeetingView.jsx fetch + loading/error/ok + sprint header + useMeetingState drive. New entries: SlideStage.jsx (props, data-testids slide-title/slide-content/slide-narration/slide-progress, per-type controls, 'No slide'/console.warn boundaries), useMeetingState.js (signature, gate rules, client-state-only), styles.css (class list), client tests (vitest/jsdom, globals:true, setup.js jest-dom, fixture briefings/sprint-1.json, run via 'cd client && npm test'). 'Not yet built' rewritten to: /api/minutes, /api/next-sprint, /api/qa, voice/TTS/ASR, next-sprint wiring. Single doc file; no contradictions; no history notes.",
+    "reviewerVerdicts": "client-router: PASS (specWrong:false) — 6/6 AC; 7/7 tests; no router package; Router.jsx imported by main.jsx; Back link present. meeting-view-page: PASS (specWrong:false) — 6/6 AC; 10/10 tests; fetch on mount + re-fetch on id change; loading/error/ok data-testids; all 6 SlideStage props wired; no write endpoint. slide-stage-renderer: PASS (specWrong:false) — 8/8 AC; 12/12 tests; purely presentational; correct per-type controls and boundaries. meeting-state-machine: PASS (specWrong:false) — 9/9 AC; 17/17 tests; correct gate rules and clamping; useState/useCallback only; 'continue' returned as a quoted key. client-test-setup: PASS (specWrong:false) — 7/7 AC; 13 tests in this lane (4 SlideStage + 9 useMeetingState) exit 0; server test 1 pass 0 fail, no server file modified. No lane escalated a contract issue. No unresolved items, no open questions."
+  }
+}
