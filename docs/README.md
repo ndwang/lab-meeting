@@ -53,6 +53,6 @@ Confirmed current state of the codebase, maintained by the in-lane docs agents
   `client/src/__tests__/setup.js`. Run via `cd client && npm test`. Coverage:
   `Router.test.jsx`, `MeetingView.test.jsx`, `__tests__/SlideStage.test.jsx`, and
   `useMeetingState.test.js` — exercised against `briefings/sprint-1.json`.
-- **scripts/poll.mjs** — local loop-closer stub (drains `/api/next-sprint`, not yet implemented).
+- **scripts/poll.mjs** — local loop-closer: polls `GET /api/next-sprint` (bearer token required) and launches the next sprint when a queued row is available.
 
-Not yet built: `/api/minutes`, `/api/qa`, voice/TTS/ASR, next-sprint wiring.
+Not yet built: `/api/minutes`, `/api/qa`, voice/TTS/ASR.
