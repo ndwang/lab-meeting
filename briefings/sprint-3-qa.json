@@ -1,0 +1,78 @@
+{
+  "sprintId": "sprint-3-qa",
+  "goal": "Build the live Q&A channel — piece 1 of the communication-layer reframe: the meeting room relays follow-up questions; a host agent spawned by the local attendant daemon answers them grounded in the briefing + live repo.",
+  "slides": [
+    {
+      "type": "info",
+      "title": "Q&A storage layer — the qa table + four db functions",
+      "content": [
+        "New qa table: id, briefing_id (FK), question, answer (nullable), status pending|claimed|answered, server-stamped created_at",
+        "insertQuestion → pending row, returns id",
+        "claimPendingQuestion → atomic claim via FOR UPDATE SKIP LOCKED (same pattern as claimNextSprint)",
+        "answerQuestion → sets answer + status, returns false on unknown id",
+        "listQAForBriefing → full thread, oldest-first",
+        "Spec match: exact. No deltas, no fallbacks; throws naturally if pool uninitialized"
+      ],
+      "narration": "First piece is the storage layer. We added a qa table and four functions to db.js. The interesting one is claimPendingQuestion — it uses Postgres FOR UPDATE SKIP LOCKED, the same atomic-claim trick we already use for draining the sprint queue, so even if two pollers race the daemon picks up each question exactly once. The implementation matched the spec exactly — no deltas. Eight contract tests cover it, including the boundary where only claimed-or-answered rows remain and it correctly returns null."
+    },
+    {
+      "type": "info",
+      "title": "Q&A server routes — four endpoints, correct token rules",
+      "content": [
+        "POST /api/qa — browser-facing, NO token → 201 {questionId}; 400 if briefingId/question missing",
+        "GET /api/qa?briefingId=N — browser-facing, NO token → thread array; 400 if briefingId absent/non-integer (no undefined to db)",
+        "GET /api/qa/pending — bearer token (daemon) → 200 {id,briefingId,question} or 204",
+        "POST /api/qa/:id/answer — bearer token → 200 {ok:true}; 404 unknown id; 400 missing answer",
+        "realDb wired to the four new db functions; requireToken reused unchanged",
+        "Routing verified: GET /api/qa/pending is not shadowed by the parameterized answer route",
+        "Spec match: exact. Fail-fast 400 on bad GET briefingId honored per CLAUDE.md"
+      ],
+      "narration": "Second piece is the routes. Four endpoints with the token rules from the contract: the two browser-facing routes — posting a question and polling the thread — take no token, because a human in a browser does those. The two daemon routes — claiming a pending question and posting the answer — require the bearer token. One thing worth calling out: the GET thread route fails fast with a 400 if briefingId is absent or not an integer, rather than silently passing undefined to the database — that's the fail-fast rule in CLAUDE.md. We also added a dedicated routing test proving the static pending path isn't shadowed by the parameterized answer route. The implementation matched the spec exactly."
+    },
+    {
+      "type": "info",
+      "title": "Q&A client panel — an aside, not a slide-flow change",
+      "content": [
+        "QAPanel renders alongside SlideStage in a meeting-stage wrapper, available throughout the meeting",
+        "Submit → POST /api/qa, optimistic 'You' bubble in 'pending — bringing in the engineer…' state, textarea clears",
+        "Polls GET /api/qa?briefingId=N every 3s while anything is unanswered; replaces thread each tick",
+        "Answered items render attributed to 'Claude — Engineer'",
+        "Polling stops when all answered and on unmount; POST failure shows inline error + re-enables form",
+        "Slide-gating flow (continue/answer/decide) untouched — confirmed by all 18 existing MeetingView tests staying green"
+      ],
+      "narration": "Third piece is the client. The key design constraint was: don't break the page-gated slide flow. So the Q&A panel is an aside that sits beside the slide stage — it's available throughout the meeting and holds no slide state. The human types a follow-up, we POST it, optimistically show their question in a pending state, and clear the box. Then we poll the thread every three seconds while anything is still unanswered; once the host agent answers, it renders attributed to 'Claude — Engineer', and polling stops when everything is answered or the component unmounts. All eighteen existing meeting-view tests stayed green, which is our proof the slide gating is undisturbed."
+    },
+    {
+      "type": "info",
+      "title": "Docs updated to current state",
+      "content": [
+        "docs/README.md: documented all four Q&A routes with auth rules + status codes",
+        "Documented the qa table schema and the four db functions",
+        "Documented QAPanel.jsx (aside, polling cadence, error state) + the meeting-stage wrapper + new qa-* CSS classes",
+        "Test list now references the split files: server/test/qa.db.test.js and qa.routes.test.js, plus client QAPanel.test.jsx",
+        "'Not yet built' narrowed from '/api/qa, voice/TTS/ASR' to just 'voice/TTS/ASR'"
+      ],
+      "narration": "Docs were kept current in the same sprint. The README now documents all four routes with their token rules and status codes, the qa table and its four functions, and the client panel. The not-yet-built line shrank to just voice — the Q&A channel is now live end to end on the server and the client."
+    },
+    {
+      "type": "decision",
+      "title": "Q&A channel landed — what's next?",
+      "content": [
+        "Done: qa storage + 4 routes + client panel; 37 server tests, 61 client tests, build all green",
+        "Merged clean on first integration pass; only out-of-scope item is the daemon-side host agent (director owns scripts/poll.mjs)",
+        "Proposed next sprint: wire the host agent into the attendant daemon — claim pending Q&A, answer grounded in briefing artifacts + live repo, POST back",
+        "Alternative: next-instruction handoff (host composes minutes + proposed next sprint, human approves before enqueue)",
+        "Approve to proceed with the host-agent wiring, or Redirect"
+      ],
+      "narration": "So the Q&A channel is fully landed on both server and client — thirty-seven server tests, sixty-one client tests, and the build all green, merged clean on the first integration pass. The one thing that's deliberately not here is the other side of the wire: the host agent inside the attendant daemon that actually claims a pending question and answers it. That's the director's scripts/poll.mjs and was out of scope by design. My recommendation for the next sprint is to wire that host agent in — claim from GET /api/qa/pending, answer grounded in the briefing artifacts plus the live repo, and POST the answer back — which makes this whole channel come alive in a demo. The alternative on the table is the next-instruction handoff, where the host composes the minutes and a proposed next sprint that you approve before it's enqueued. Approve to go with wiring the host agent, or redirect me."
+    }
+  ],
+  "artifacts": {
+    "specDeltas": "Three specs, all implemented exactly as written — zero deltas, zero escalations.\n\nqa-db-layer (specs/qa-db-layer.md): qa table DDL + insertQuestion / claimPendingQuestion / answerQuestion / listQAForBriefing. Reviewer: pass, specWrong=false. claimPendingQuestion uses FOR UPDATE SKIP LOCKED exactly like claimNextSprint; answerQuestion returns rowCount>0; listQAForBriefing ORDER BY id ASC.\n\nqa-server-routes (specs/qa-server-routes.md): POST /api/qa (no token, 201/400), GET /api/qa?briefingId=N (no token, 400 on absent/non-integer — fail-fast, never passes undefined to db), GET /api/qa/pending (token, 200/204), POST /api/qa/:id/answer (token, 200/404/400). realDb extended with the four functions. Reviewer: pass, specWrong=false.\n\nqa-client-ui (specs/qa-client-ui.md): QAPanel aside in a meeting-stage wrapper; POST then 3s poll until answered; 'Claude — Engineer' attribution; clearInterval on unmount and when all answered; inline error + re-enable on POST failure. Reviewer: pass, specWrong=false. One cosmetic lint note (unused useRef import) — no runtime impact.",
+    "gitLog": "Integration range 7ec4e9a8..362ca46 (merged into main, first fix-loop attempt, all worktrees removed):\n362ca46 Merge sprint/qa-client-ui: meeting-view Q&A follow-up panel\n084bfe7 Merge sprint/qa-server-routes: Q&A channel routes\n047fc22 Merge sprint/qa-db-layer: Q&A storage layer (qa table + db functions)\n24cf21d docs: add qa.test.js to server test list, clarify Q&A not-yet-built scope\n6ba1543 docs: remove /api/qa from Not yet built — client Q&A panel is now confirmed built\n4e3a22b Add qa.test.js covering the Q&A db-layer function contracts\n3d45496 Add live Q&A channel server routes + db functions\n9d6b699 Add live Q&A panel to the meeting view\nf6aab4e Add qa table DDL + Q&A storage functions to db.js",
+    "diffs": "9 files, +1008/-16.\n\nserver/src/db.js (+62): qa table DDL (id SERIAL PK, briefing_id INTEGER REFERENCES briefings(id), question TEXT NOT NULL, answer TEXT nullable, status TEXT NOT NULL DEFAULT 'pending', created_at TIMESTAMPTZ DEFAULT now()) + insertQuestion/claimPendingQuestion/answerQuestion/listQAForBriefing. claimPendingQuestion: UPDATE qa SET status='claimed' WHERE id=(SELECT id FROM qa WHERE status='pending' ORDER BY id ASC FOR UPDATE SKIP LOCKED LIMIT 1) RETURNING id, briefing_id, question.\n\nserver/src/app.js (+55): four routes added to buildApp(); realDb extended; requireToken reused. POST /api/qa and GET /api/qa take no token; GET /api/qa/pending and POST /api/qa/:id/answer call requireToken. GET /api/qa validates with Number()+Number.isInteger() and 400s on absent/non-integer.\n\nclient/src/QAPanel.jsx (+128, new): POLL_INTERVAL_MS=3000; submitStatus idle|pending|error; optimistic thread append; hasUnanswered drives the polling useEffect (cleared on unmount and when all answered); QAItem renders 'You' vs 'Claude — Engineer'.\n\nclient/src/MeetingView.jsx (+20/-16): SlideStage + QAPanel wrapped in a meeting-stage div; QAPanel given briefingId.\n\nclient/src/styles.css (+23): meeting-stage + qa-* classes.\nserver/test/qa.db.test.js (+148, new) and server/test/qa.routes.test.js (+334, new): integration split the original add/add qa.test.js collision into two non-overlapping files.\nclient/src/QAPanel.test.jsx (+200, new).\ndocs/README.md (+54): routes, table, functions, panel, tests.",
+    "testOutput": "Server (cd server && npm test, node --test): tests 37, pass 37, fail 0. Includes pre-existing version + minutes tests, the 8 qa.db storage tests, and the qa.routes route tests.\n\nClient (cd client && npm test, vitest run): Test Files 5 passed (5), Tests 61 passed (61). Includes 7 new QAPanel tests (POST body; 'You' label + pending state; textarea clear; polled answer attributed to 'Claude — Engineer'; polling-stops-when-answered; POST-error re-enable; empty-input disable) and all 18 pre-existing MeetingView tests plus SlideStage/useMeetingState/Router suites.\n\nBuild (npm run build): vite build succeeded, dist emitted. Re-verified by the reporter on main: server 37/37, client 61/61, both green.",
+    "docsChanged": "docs/README.md only. Added: all four Q&A routes (auth rules + status codes), qa table schema, the four db functions, QAPanel.jsx description (aside, 3s polling, 'Claude — Engineer' attribution, error state), the meeting-stage wrapper note on MeetingView, the new qa-* CSS classes, and the split test files (server/test/qa.db.test.js + qa.routes.test.js, client QAPanel.test.jsx). 'Not yet built' narrowed from '/api/qa, voice/TTS/ASR' to 'voice/TTS/ASR'. No history/changelog notes (docs-maintainer convention).",
+    "reviewerVerdicts": "All three lanes: pass=true, specWrong=false.\n\nqa-db-layer: 'Implementation fully satisfies the spec. All acceptance criteria met, all test cases covered, all 19 server tests green at the time, docs updated.'\n\nqa-server-routes: 'Implementation fully satisfies all acceptance criteria. Every route matches the specified auth rules, status codes, validation logic, and error messages. The db layer implements atomic claim with FOR UPDATE SKIP LOCKED. Docs updated.'\n\nqa-client-ui: 'Implementation passes all acceptance criteria. All 61 tests green, every spec section satisfied, docs updated, no new dependencies, clearInterval on unmount confirmed. One unused import (useRef) is a cosmetic lint warning that does not affect correctness.'\n\nIntegration: testStatus green, merged on first attempt; the only cross-lane collision was server/src/db.js (identical Q&A code from both server lanes — de-duplicated to one clean copy) and an add/add on qa.test.js (split into qa.db.test.js + qa.routes.test.js so neither suite was dropped). scripts/poll.mjs untouched (director-owned)."
+  }
+}
