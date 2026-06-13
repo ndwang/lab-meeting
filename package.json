@@ -1,0 +1,17 @@
+{
+  "name": "lab-meeting",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "A human-in-the-loop layer for long-horizon agents — agents report to their human at lab meetings.",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "install:all": "npm --prefix server install && npm --prefix client install",
+    "build": "npm run install:all && npm --prefix client run build",
+    "dev:server": "npm --prefix server run dev",
+    "dev:client": "npm --prefix client run dev",
+    "start": "node server/src/index.js"
+  }
+}

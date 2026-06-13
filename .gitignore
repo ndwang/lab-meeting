@@ -1,0 +1,19 @@
+# deps & build
+node_modules/
+client/dist/
+*.log
+
+# env / secrets
+.env
+.env.*
+!.env.example
+
+# event reference material — not part of the product
+Details _ Claude Build Day.html
+Details _ Claude Build Day_files/
+
+# OS
+.DS_Store
+
+# Claude Code local settings (keep workflows + project config tracked)
+.claude/settings.local.json
