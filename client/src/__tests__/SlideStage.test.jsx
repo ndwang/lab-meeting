@@ -88,7 +88,7 @@ describe('SlideStage — question slide', () => {
 });
 
 describe('SlideStage — decision slide', () => {
-  it('renders Approve and Redirect; Redirect disabled while empty; Approve calls onDecide', () => {
+  it('renders Approve and Redirect; Redirect disabled while empty; Approve passes the slide content as the directive', () => {
     const { props } = renderStage({
       slides,
       currentIndex: slides.length - 1,
@@ -100,7 +100,12 @@ describe('SlideStage — decision slide', () => {
     const redirect = screen.getByRole('button', { name: 'Redirect' });
     expect(redirect).toBeDisabled();
     fireEvent.click(approve);
-    expect(props.onDecide).toHaveBeenCalledWith('approve', '');
+    // Approve adopts the briefing's proposed next-steps: the decision slide's
+    // content bullets joined with newlines become the next sprint's directive.
+    expect(props.onDecide).toHaveBeenCalledWith(
+      'approve',
+      decisionSlide.content.join('\n'),
+    );
   });
 
   it('enables Redirect after typing and calls onDecide with the direction', () => {

@@ -1,12 +1,12 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import SlideStage from './SlideStage.jsx';
 import { useMeetingState } from './useMeetingState.js';
 
 // The meeting page. Owns the top-level data fetch for a single briefing, the
 // loading/error states, and the meeting chrome (sprint name + goal). It hands
-// the slides to the page-gating state machine (useMeetingState) and renders the
-// slide stage. No writes, no polling — answers and the decision live in client
-// state only (this sprint).
+// the slides to the page-gating state machine (useMeetingState), renders the
+// slide stage, and — when the human resolves the decision slide — POSTs the
+// minutes to the server, which records them and queues the next sprint.
 export default function MeetingView({ id }) {
   // status: 'loading' | 'error' | 'ok'
   const [status, setStatus] = useState('loading');
@@ -48,7 +48,7 @@ export default function MeetingView({ id }) {
       </header>
       {status === 'loading' && <Loading />}
       {status === 'error' && <ErrorState />}
-      {status === 'ok' && <Meeting briefing={briefing} />}
+      {status === 'ok' && <Meeting briefing={briefing} briefingId={id} />}
     </main>
   );
 }
@@ -71,8 +71,55 @@ function ErrorState() {
 
 // Rendered only once the briefing has loaded so useMeetingState is always
 // driven by a stable, present slides array.
-function Meeting({ briefing }) {
+//
+// submitStatus: null | 'pending' | 'confirmed' | 'error'
+//   null      — no decision recorded yet (controls live)
+//   'pending' — POST in flight (controls hidden)
+//   'confirmed' — server recorded the minutes (stage replaced by confirmation)
+//   'error'   — POST failed; controls live again so the human can retry
+function Meeting({ briefing, briefingId }) {
   const state = useMeetingState(briefing.slides);
+  const [submitStatus, setSubmitStatus] = useState(null);
+  // Guards the POST against React StrictMode's double-invoke: set before the
+  // fetch, cleared on cleanup, so exactly one POST is sent per decision.
+  const submitted = useRef(false);
+
+  useEffect(() => {
+    if (!state.decision) return;
+    if (submitStatus !== null) return;
+    if (submitted.current) return;
+    submitted.current = true;
+
+    setSubmitStatus('pending');
+
+    const answers = Object.entries(state.answers).map(([i, answer]) => ({
+      title: briefing.slides[i]?.title ?? '',
+      answer,
+    }));
+
+    fetch('/api/minutes', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        briefingId,
+        outcome: state.decision.outcome,
+        directive: state.decision.direction,
+        answers,
+      }),
+    })
+      .then((res) => {
+        setSubmitStatus(res.status === 201 ? 'confirmed' : 'error');
+      })
+      .catch(() => {
+        setSubmitStatus('error');
+      });
+
+    return () => {
+      submitted.current = false;
+    };
+  }, [state.decision, submitStatus, state.answers, briefing.slides, briefingId]);
+
+  if (submitStatus === 'confirmed') return <ConfirmedState />;
 
   return (
     <>
@@ -90,6 +137,28 @@ function Meeting({ briefing }) {
         onAnswer={state.answer}
         onDecide={state.decide}
       />
+      {submitStatus === 'error' && (
+        <SubmitError onRetry={() => setSubmitStatus(null)} />
+      )}
     </>
+  );
+}
+
+function ConfirmedState() {
+  return (
+    <div className="minutes-confirmed" data-testid="minutes-confirmed">
+      Minutes recorded · next sprint queued
+    </div>
+  );
+}
+
+function SubmitError({ onRetry }) {
+  return (
+    <div className="minutes-error" data-testid="minutes-error">
+      Failed to record minutes.{' '}
+      <button type="button" data-testid="minutes-retry" onClick={onRetry}>
+        Try again
+      </button>
+    </div>
   );
 }

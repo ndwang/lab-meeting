@@ -38,9 +38,12 @@ function QuestionControls({ onAnswer }) {
   );
 }
 
-function DecisionControls({ onDecide }) {
+function DecisionControls({ onDecide, slide }) {
   const [direction, setDirection] = useState('');
   const trimmed = direction.trim();
+  // Approving accepts the briefing's proposed next-steps text — the decision
+  // slide's content bullets joined with newlines — as the next sprint's goal.
+  const approveDirective = (slide?.content ?? []).join('\n');
   return (
     <div className="slide-controls">
       <textarea
@@ -50,7 +53,7 @@ function DecisionControls({ onDecide }) {
         onChange={(e) => setDirection(e.target.value)}
       />
       <div className="decision-actions">
-        <button type="button" onClick={() => onDecide('approve', '')}>
+        <button type="button" onClick={() => onDecide('approve', approveDirective)}>
           Approve
         </button>
         <button
@@ -93,7 +96,7 @@ export default function SlideStage({
       controls = <QuestionControls onAnswer={onAnswer} />;
       break;
     case 'decision':
-      controls = <DecisionControls onDecide={onDecide} />;
+      controls = <DecisionControls onDecide={onDecide} slide={slide} />;
       break;
     default:
       console.warn(`SlideStage: unrecognised slide type "${slide.type}"`);
