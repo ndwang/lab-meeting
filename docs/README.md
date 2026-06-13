@@ -13,10 +13,33 @@ Confirmed current state of the codebase, maintained by the in-lane docs agents
   - `GET /api/health`, `GET /api/version` — `{ version }` read from the root `package.json` at
     module load; no DB, no auth.
   - `POST /api/briefings` — bearer token; ingests a briefing. `GET /api/briefings[/:id]` — reads.
-  - `POST /api/minutes` — browser-facing, **no token**. Body `{ briefingId, outcome:
-    'approve'|'redirect', directive, answers? }`. Persists a `minutes` row via `db.insertMinutes`
-    and enqueues the next sprint via `db.enqueueSprint`. Returns `{ minutesId, queuedSprintId }`.
-    400 if `briefingId`/`outcome`/`directive` missing or `outcome` invalid.
+  - **Decision handoff** — a status machine on the `minutes` row
+    (`resolved → composing → composed → approved`). Recording the human's decision is decoupled from
+    enqueuing the next sprint: the human resolves the decision slide, a host agent composes the next
+    instruction, the human approves it, and only then is a sprint queued. The server holds no LLM —
+    it is the state-machine bus.
+    - `POST /api/minutes` — browser-facing, **no token**. Body `{ briefingId, outcome:
+      'approve'|'redirect', directive, answers? }`. Inserts a `minutes` row with `status='resolved'`
+      via `db.insertMinutes` (dedicated `directive`/`answers` columns; `answers` defaults to `[]`).
+      Does NOT enqueue. Returns `201 { minutesId }`. `400` if `briefingId`/`outcome`/`directive`
+      missing or `outcome` invalid.
+    - `GET /api/compose/pending` — **requires the bearer token** (the attendant daemon). Atomically
+      claims the oldest `resolved` row (`db.claimPendingCompose`, marks it `composing`) and returns
+      `200 { minutesId, briefingId, outcome, directive, answers }`; `204` when none pending.
+    - `POST /api/minutes/:id/instruction` — **requires the bearer token** (the host agent). Body
+      `{ goal, minutesText }`. Sets `composed_goal`/`composed_minutes` and advances the row to
+      `composed` via `db.setComposed`. Returns `200 { ok: true }`; `404` if the id is unknown;
+      `400` if `goal` or `minutesText` is missing.
+    - `GET /api/minutes?briefingId=N` — browser-facing, **no token**. Returns the minutes record(s)
+      for the briefing `[{ id, status, outcome, directive, composedGoal, composedMinutes, created_at }]`
+      via `db.getMinutesForBriefing` (oldest-first) so the client can poll for the composed
+      instruction. `400` if `briefingId` is absent or not a valid integer. Registered before the
+      `/api/minutes/:id` POST routes.
+    - `POST /api/minutes/:id/approve` — browser-facing, **no token**. Body `{ goal? }` (the
+      possibly-edited instruction). Enqueues `sprint_queue(goal = provided goal else composed_goal,
+      minutes = composed_minutes)` and advances the row to `approved` via `db.approveMinutes`.
+      Returns `201 { queuedSprintId }`; `409` if the row is not yet `composed`; `404` if the id is
+      unknown (discriminated on the db error message: "not composed" → 409, "not found" → 404).
   - `GET /api/next-sprint` — **requires the bearer token** (the local poller). Atomically claims the
     oldest `pending` queued sprint (`UPDATE ... FOR UPDATE SKIP LOCKED`, marks it `consumed` so it
     drains exactly once) and returns `{ goal, minutes }`; `204` when none pending.
@@ -42,34 +65,37 @@ Confirmed current state of the codebase, maintained by the in-lane docs agents
 - **server/src/index.js** — entrypoint: requires `DATABASE_URL`, `LAB_MEETING_TOKEN`, `PORT`
   (fails fast if missing), connects the DB, then listens.
 - **server/src/db.js** — Postgres via `pg`; requires `DATABASE_URL`, no fallback. Tables:
-  `briefings`, `minutes`, `sprint_queue`, `qa`. Functions: `insertBriefing`, `listBriefings`,
-  `getBriefing`, `enqueueSprint`, `claimNextSprint` (atomic claim of the oldest
-  pending queued sprint). Minutes status-machine functions drive the
-  `resolved → composing → composed → approved` handoff on a `minutes` row:
-  `insertMinutes({ briefingId, outcome, directive, answers })` inserts a row with
-  `status='resolved'` (fields in dedicated columns, not a payload blob) and returns its id;
-  `claimPendingCompose()` atomically claims the oldest `resolved` row (`UPDATE ... FOR UPDATE SKIP
-  LOCKED`, marks it `composing`) and returns `{ minutesId, briefingId, outcome, directive, answers }`
-  or `null` when none; `setComposed({ id, composedGoal, composedMinutes })` writes the host agent's
-  composed instruction and moves the row to `composed`, returning `true`/`false`;
-  `getMinutesForBriefing(briefingId)` returns all rows for a briefing oldest-first as
-  `[{ id, status, outcome, directive, composedGoal, composedMinutes, created_at }]`;
-  `approveMinutes({ id, goal? })` runs in one transaction — guards the row is `composed` (throws
-  `not found` for an unknown id, `not composed` otherwise), enqueues `sprint_queue` with the given
-  `goal` (falling back to `composed_goal`) and the `composed_minutes`, marks the row `approved`, and
-  returns the new sprint-queue id. The `minutes` table: `id`, `briefing_id` (FK → briefings),
-  `outcome`, `directive`, `answers` (JSONB), `composed_goal`, `composed_minutes`, `status`
-  (`resolved`|`composing`|`composed`|`approved`, default `resolved`), server-stamped `created_at`;
-  the schema is idempotent (`CREATE TABLE IF NOT EXISTS` plus `ALTER TABLE ... ADD COLUMN IF NOT
-  EXISTS` for the new columns) so it runs cleanly on both fresh and existing deployed DBs. Q&A
-  channel functions: `insertQuestion({ briefingId, question })` inserts
-  a `pending` `qa` row and returns its id; `claimPendingQuestion()` atomically claims the oldest
-  `pending` question (`UPDATE ... FOR UPDATE SKIP LOCKED`, marks it `claimed`) and returns
-  `{ id, briefingId, question }` or `null` when none pending; `answerQuestion({ id, answer })` sets
-  the answer and marks the row `answered`, returning `true` if a row matched else `false`;
-  `listQAForBriefing(briefingId)` returns the thread `[{ id, question, answer, status, created_at }]`
-  oldest-first. The `qa` table: `id`, `briefing_id` (FK → briefings), `question`, nullable `answer`,
-  `status` (`pending`|`claimed`|`answered`, default `pending`), server-stamped `created_at`.
+  `briefings`, `minutes`, `sprint_queue`, `qa`. Schema is idempotent for fresh and existing
+  deployments: `CREATE TABLE IF NOT EXISTS` covers fresh DBs; `ALTER TABLE minutes ADD COLUMN IF
+  NOT EXISTS` statements bring an existing table forward. Functions:
+  - `insertBriefing`, `listBriefings`, `getBriefing` — briefing CRUD.
+  - `insertMinutes({ briefingId, outcome, directive, answers })` — inserts a `minutes` row with
+    `status='resolved'`; `answers` defaults to `[]`. Returns the new row id.
+  - `claimPendingCompose()` — atomically claims the oldest `resolved` minutes row (`FOR UPDATE SKIP
+    LOCKED`, marks it `composing`). Returns `{ minutesId, briefingId, outcome, directive, answers }`
+    or `null` when none pending.
+  - `setComposed({ id, composedGoal, composedMinutes })` — sets the composed fields and advances
+    the row to `composed`. Returns `true` if a row was updated, `false` if the id is unknown.
+  - `getMinutesForBriefing(briefingId)` — returns all minutes rows for a briefing oldest-first as
+    `[{ id, status, outcome, directive, composedGoal, composedMinutes, created_at }]`.
+  - `approveMinutes({ id, goal })` — in one transaction: reads the minutes row (`FOR UPDATE`),
+    throws `"not found"` if id is unknown or `"not composed"` if status is not `composed`, inserts a
+    `sprint_queue` row (using provided `goal` else `composed_goal`), and marks the minutes row
+    `approved`. Returns the new `sprint_queue` id.
+  - `enqueueSprint({ goal, minutes })` — low-level sprint enqueue; called internally by
+    `approveMinutes`. Not called directly by any route.
+  - `claimNextSprint()` — atomically claims the oldest `pending` queued sprint (`FOR UPDATE SKIP
+    LOCKED`, marks it `consumed`). Returns `{ goal, minutes }` or `null` when none pending.
+  - Q&A channel: `insertQuestion({ briefingId, question })` inserts a `pending` `qa` row and
+    returns its id; `claimPendingQuestion()` atomically claims the oldest `pending` question (marks
+    it `claimed`) and returns `{ id, briefingId, question }` or `null`; `answerQuestion({ id,
+    answer })` sets the answer and marks the row `answered`, returning `true` if a row matched else
+    `false`; `listQAForBriefing(briefingId)` returns `[{ id, question, answer, status, created_at }]`
+    oldest-first.
+  - The `minutes` table columns: `id`, `briefing_id` (FK → briefings), `outcome`, `directive`,
+    `answers` (JSONB), `composed_goal`, `composed_minutes`, `status` (default `resolved`),
+    `created_at`. The `qa` table: `id`, `briefing_id` (FK → briefings), `question`, nullable
+    `answer`, `status` (`pending`|`claimed`|`answered`, default `pending`), `created_at`.
 - **server/src/env.js** — `requireEnv(name)`: fail-fast env lookup, no default values.
 - **client/** — React 18 + Vite 6 SPA with hash-based client-side routing (no router dependency).
   - `src/main.jsx` mounts `src/Router.jsx`.

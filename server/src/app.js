@@ -11,7 +11,10 @@ import {
   listBriefings,
   getBriefing,
   insertMinutes,
-  enqueueSprint,
+  claimPendingCompose,
+  setComposed,
+  getMinutesForBriefing,
+  approveMinutes,
   claimNextSprint,
   insertQuestion,
   claimPendingQuestion,
@@ -29,20 +32,6 @@ const { version } = JSON.parse(
   readFileSync(path.resolve(__dirname, '../../package.json'), 'utf8'),
 );
 
-// Render the human-readable minutes text stored on the queued sprint. This is
-// the standing direction the next sprint's agents read: the outcome, the
-// directive, and any captured question answers.
-function renderMinutes({ outcome, directive, answers }) {
-  const lines = [`Outcome: ${outcome}`, `Directive: ${directive}`];
-  if (answers.length > 0) {
-    lines.push('', 'Answers:');
-    for (const { title, answer } of answers) {
-      lines.push(`- ${title}: ${answer}`);
-    }
-  }
-  return lines.join('\n');
-}
-
 // The db layer is injectable so the DB-touching routes are testable via
 // app.inject() without a live Postgres. Production (index.js) calls buildApp()
 // with no args and uses the real module.
@@ -51,7 +40,10 @@ const realDb = {
   listBriefings,
   getBriefing,
   insertMinutes,
-  enqueueSprint,
+  claimPendingCompose,
+  setComposed,
+  getMinutesForBriefing,
+  approveMinutes,
   claimNextSprint,
   insertQuestion,
   claimPendingQuestion,
@@ -108,9 +100,17 @@ export async function buildApp({ db = realDb } = {}) {
     return row.payload ?? row;
   });
 
+  // ---- Decision handoff: a status machine on the minutes row
+  // (resolved → composing → composed → approved). The browser records the
+  // human's decision; the attendant daemon claims it; the host agent composes
+  // the next instruction; the browser polls for it and the human approves it;
+  // only then is the next sprint enqueued. The server holds no LLM — it is the
+  // state-machine bus that carries the handoff between the room and the lab.
+
   // Resolved decision slide. Called by the BROWSER (no bearer token) when the
-  // human approves or redirects: persists the minutes, then enqueues the next
-  // sprint with the directive as its goal. Returns { minutesId, queuedSprintId }.
+  // human approves or redirects: persists the human's decision as a 'resolved'
+  // minutes row. Does NOT enqueue — that happens at approve time, after the host
+  // agent has composed the next instruction. Returns { minutesId }.
   app.post('/api/minutes', async (req, reply) => {
     const body = req.body ?? {};
     const { briefingId, outcome, directive, answers } = body;
@@ -131,14 +131,72 @@ export async function buildApp({ db = realDb } = {}) {
     const minutesId = await db.insertMinutes({
       briefingId,
       outcome,
-      payload: { briefingId, outcome, directive, answers: normalizedAnswers },
+      directive,
+      answers: normalizedAnswers,
     });
 
-    const minutesText = renderMinutes({ outcome, directive, answers: normalizedAnswers });
-    const queuedSprintId = await db.enqueueSprint({ goal: directive, minutes: minutesText });
+    req.log.info({ minutesId, outcome }, 'minutes recorded (resolved)');
+    return reply.code(201).send({ minutesId });
+  });
 
-    req.log.info({ minutesId, queuedSprintId, outcome }, 'minutes recorded, sprint queued');
-    return reply.code(201).send({ minutesId, queuedSprintId });
+  // The attendant daemon polls this to claim the oldest 'resolved' minutes row
+  // for composition. Bearer token. Atomically marks it 'composing' so a row is
+  // claimed exactly once even under concurrent pollers; 204 when none remain.
+  app.get('/api/compose/pending', async (req, reply) => {
+    if (requireToken(req, reply)) return;
+    const claimed = await db.claimPendingCompose();
+    if (!claimed) return reply.code(204).send();
+    return reply.code(200).send(claimed);
+  });
+
+  // Browser polls the minutes record(s) for a briefing to watch the handoff
+  // status advance and read the composed instruction. No bearer token.
+  // Registered before the parameterized POST routes; query-param routing keeps
+  // it distinct from the /api/minutes/:id forms.
+  app.get('/api/minutes', async (req, reply) => {
+    const raw = req.query.briefingId;
+    const briefingId = Number(raw);
+    if (raw == null || raw === '' || !Number.isInteger(briefingId)) {
+      return reply.code(400).send({ error: 'briefingId is required' });
+    }
+    return db.getMinutesForBriefing(briefingId);
+  });
+
+  // Host agent posts the composed next instruction. Bearer token. Sets the
+  // composed columns and advances the row to 'composed'. 404 on unknown id.
+  app.post('/api/minutes/:id/instruction', async (req, reply) => {
+    if (requireToken(req, reply)) return;
+    const { goal, minutesText } = req.body ?? {};
+    if (!goal || !minutesText) {
+      return reply.code(400).send({ error: 'goal and minutesText are required' });
+    }
+    const updated = await db.setComposed({
+      id: req.params.id,
+      composedGoal: goal,
+      composedMinutes: minutesText,
+    });
+    if (!updated) return reply.code(404).send({ error: 'not found' });
+    return reply.code(200).send({ ok: true });
+  });
+
+  // Browser posts the human's approval (with the possibly-edited goal). No
+  // bearer token. Enqueues the next sprint and advances the row to 'approved'.
+  // 409 if the row has not been composed yet; 404 if the id is unknown.
+  app.post('/api/minutes/:id/approve', async (req, reply) => {
+    const { goal } = req.body ?? {};
+    try {
+      const queuedSprintId = await db.approveMinutes({ id: req.params.id, goal });
+      req.log.info({ minutesId: req.params.id, queuedSprintId }, 'minutes approved, sprint queued');
+      return reply.code(201).send({ queuedSprintId });
+    } catch (err) {
+      if (err.message.includes('not composed')) {
+        return reply.code(409).send({ error: 'minutes not yet composed' });
+      }
+      if (err.message.includes('not found')) {
+        return reply.code(404).send({ error: 'not found' });
+      }
+      throw err;
+    }
   });
 
   // Drained by the local poller (scripts/poll.mjs) — requires the bearer token.
