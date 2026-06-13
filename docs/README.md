@@ -16,7 +16,12 @@ Confirmed current state of the codebase, maintained by the in-lane docs agents
 - **server/src/db.js** — Postgres via `pg`; requires `DATABASE_URL`, no fallback. Tables:
   `briefings`, `minutes`, `sprint_queue`.
 - **server/src/env.js** — `requireEnv(name)`: fail-fast env lookup, no default values.
-- **client/** — React 18 + Vite 6 hello-world: shows liveness + lists ingested briefings.
+- **client/** — React 18 + Vite 6 SPA. `src/main.jsx` mounts `src/Router.jsx`, a hash-based
+  router (no router dependency): `#/` (or empty hash) renders the landing list (`src/App.jsx`,
+  default export `BriefingList`), and `#/meeting/:id` renders the meeting view (`src/MeetingView.jsx`)
+  with a "Back to briefings" link. A non-integer meeting id redirects to `#/`. Each briefing row on
+  the landing list links to `#/meeting/{id}`. Router routing logic is tested by
+  `src/__tests__/Router.test.jsx` (`cd client && npm test`).
 - **scripts/poll.mjs** — local loop-closer stub (drains `/api/next-sprint`, not yet implemented).
 
 Not yet built: meeting UI / slide stage, `/api/minutes`, `/api/next-sprint`, `/api/qa`, voice.

@@ -1,9 +1,9 @@
 import { useEffect, useState } from 'react';
 
-// Hello-world shell. Proves the live URL is up and the ingest contract works
-// end to end: any briefing POSTed to /api/briefings shows up in this list.
-// Sprint 1 replaces this with the Zoom-style meeting + slide stage.
-export default function App() {
+// Landing list. Proves the live URL is up and the ingest contract works end to
+// end: any briefing POSTed to /api/briefings shows up here. Each row links to
+// its meeting view at #/meeting/:id (hash routing — see Router.jsx).
+export default function BriefingList() {
   const [health, setHealth] = useState(null);
   const [briefings, setBriefings] = useState([]);
 
@@ -45,8 +45,10 @@ export default function App() {
           <ul>
             {briefings.map((b) => (
               <li key={b.id}>
-                <strong>{b.sprint_id || `briefing-${b.id}`}</strong>
-                <span>{b.goal || 'untitled'}</span>
+                <a href={`#/meeting/${b.id}`}>
+                  <strong>{b.sprint_id || `briefing-${b.id}`}</strong>
+                  <span>{b.goal || 'untitled'}</span>
+                </a>
               </li>
             ))}
           </ul>
