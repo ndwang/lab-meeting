@@ -29,6 +29,18 @@ Two systems joined over HTTP, not the filesystem:
   built React/Vite SPA, backed by Postgres. The live URL.
 - **Loop-closer (`scripts/poll.mjs`, local):** drains queued sprints and launches them headless.
 
+### Architecture at a glance
+
+The local `/sprint` runner and the deployed meeting app close one HTTP control loop:
+
+```
+/sprint runner  --POST /api/briefings-->  meeting app  --(human meeting: review + redirect)-->
+  POST /api/minutes  -->  GET /api/next-sprint  -->  poll.mjs launches the next /sprint
+```
+
+The runner reports a briefing, the human redirects in the meeting, minutes are written, and
+`poll.mjs` polls `/api/next-sprint` to launch the next sprint from that direction.
+
 See `CLAUDE.md` for the full HTTP contract + briefing schema, `rubric.md` for acceptance criteria,
 and `initial_files/lab-meeting-design-doc.md` for the full design.
 
