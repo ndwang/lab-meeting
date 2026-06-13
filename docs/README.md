@@ -92,4 +92,4 @@ Confirmed current state of the codebase, maintained by the in-lane docs agents
 - **scripts/poll.mjs** — local loop-closer: polls `GET /api/next-sprint` (bearer token required) and
   drains the queue, launching the next sprint when a queued row is available; owned by the sprint runner.
 
-Not yet built: `/api/qa`, voice/TTS/ASR.
+Not yet built: voice/TTS/ASR.
