@@ -16,7 +16,15 @@ Confirmed current state of the codebase, maintained by the in-lane docs agents
 - **server/src/db.js** — Postgres via `pg`; requires `DATABASE_URL`, no fallback. Tables:
   `briefings`, `minutes`, `sprint_queue`.
 - **server/src/env.js** — `requireEnv(name)`: fail-fast env lookup, no default values.
-- **client/** — React 18 + Vite 6 hello-world: shows liveness + lists ingested briefings.
+- **client/** — React 18 + Vite 6: shows liveness + lists ingested briefings.
+- **client/src/useMeetingState.js** — `useMeetingState(slides)`: the page-gating state machine
+  hook. Tracks `currentIndex`, `answers` (index → text, for `question` slides), and `decision`
+  (`null` until resolved, then `{ outcome: 'approve'|'redirect', direction }`). Exposes
+  `continue()` (advances `info` slides), `answer(text)` (records a non-empty answer and advances
+  `question` slides), and `decide(outcome, direction)` (resolves the terminal `decision` slide
+  without advancing). All gates no-op when not applicable; client state only, no server writes.
+  Tested by `client/src/useMeetingState.test.js` against `briefings/sprint-1.json`
+  (`cd client && npm test`, vitest + `@testing-library/react`).
 - **scripts/poll.mjs** — local loop-closer stub (drains `/api/next-sprint`, not yet implemented).
 
 Not yet built: meeting UI / slide stage, `/api/minutes`, `/api/next-sprint`, `/api/qa`, voice.
