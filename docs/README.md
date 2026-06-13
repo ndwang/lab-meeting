@@ -13,11 +13,33 @@ Confirmed current state of the codebase, maintained by the in-lane docs agents
   - `GET /api/health`, `GET /api/version` — `{ version }` read from the root `package.json` at
     module load; no DB, no auth.
   - `POST /api/briefings` — bearer token; ingests a briefing. `GET /api/briefings[/:id]` — reads.
-  - `POST /api/minutes` — browser-facing, **no token**. Body `{ briefingId, outcome:
-    'approve'|'redirect', directive, answers? }`. Persists a `minutes` row (outcome + full payload),
-    then enqueues a `sprint_queue` row with `goal=directive` and a rendered `minutes` text (outcome,
-    directive, any answers). Returns `{ minutesId, queuedSprintId }`. 400 if `briefingId`/`outcome`/
-    `directive` missing or `outcome` invalid.
+  - **Decision handoff** — a status machine on the `minutes` row
+    (`resolved → composing → composed → approved`). Recording the human's decision is decoupled from
+    enqueuing the next sprint: the human resolves the decision slide, a host agent composes the next
+    instruction, the human approves it, and only then is a sprint queued. The server holds no LLM —
+    it is the state-machine bus.
+    - `POST /api/minutes` — browser-facing, **no token**. Body `{ briefingId, outcome:
+      'approve'|'redirect', directive, answers? }`. Inserts a `minutes` row with `status='resolved'`
+      via `db.insertMinutes` (dedicated `directive`/`answers` columns; `answers` defaults to `[]`).
+      Does NOT enqueue. Returns `201 { minutesId }`. `400` if `briefingId`/`outcome`/`directive`
+      missing or `outcome` invalid.
+    - `GET /api/compose/pending` — **requires the bearer token** (the attendant daemon). Atomically
+      claims the oldest `resolved` row (`db.claimPendingCompose`, marks it `composing`) and returns
+      `200 { minutesId, briefingId, outcome, directive, answers }`; `204` when none pending.
+    - `POST /api/minutes/:id/instruction` — **requires the bearer token** (the host agent). Body
+      `{ goal, minutesText }`. Sets `composed_goal`/`composed_minutes` and advances the row to
+      `composed` via `db.setComposed`. Returns `200 { ok: true }`; `404` if the id is unknown;
+      `400` if `goal` or `minutesText` is missing.
+    - `GET /api/minutes?briefingId=N` — browser-facing, **no token**. Returns the minutes record(s)
+      for the briefing `[{ id, status, outcome, directive, composedGoal, composedMinutes, created_at }]`
+      via `db.getMinutesForBriefing` (oldest-first) so the client can poll for the composed
+      instruction. `400` if `briefingId` is absent or not a valid integer. Registered before the
+      `/api/minutes/:id` POST routes.
+    - `POST /api/minutes/:id/approve` — browser-facing, **no token**. Body `{ goal? }` (the
+      possibly-edited instruction). Enqueues `sprint_queue(goal = provided goal else composed_goal,
+      minutes = composed_minutes)` and advances the row to `approved` via `db.approveMinutes`.
+      Returns `201 { queuedSprintId }`; `409` if the row is not yet `composed`; `404` if the id is
+      unknown (discriminated on the db error message: "not composed" → 409, "not found" → 404).
   - `GET /api/next-sprint` — **requires the bearer token** (the local poller). Atomically claims the
     oldest `pending` queued sprint (`UPDATE ... FOR UPDATE SKIP LOCKED`, marks it `consumed` so it
     drains exactly once) and returns `{ goal, minutes }`; `204` when none pending.
