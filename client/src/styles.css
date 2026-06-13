@@ -28,3 +28,27 @@ li strong { color: var(--accent); }
 .back { display: inline-block; max-width: 760px; margin: 24px auto 0; padding: 0 24px;
   width: 100%; color: var(--muted); text-decoration: none; font-size: 14px; }
 .back:hover { color: var(--ink); }
+
+/* Slide stage — one slide at a time on the meeting stage. */
+.slide-stage { background: var(--panel); border-radius: 14px; padding: 32px;
+  display: flex; flex-direction: column; gap: 20px; }
+.slide-progress { font-size: 13px; text-transform: uppercase; letter-spacing: .08em;
+  color: var(--muted); }
+.slide-title { font-size: 28px; font-weight: 700; margin: 0; color: var(--ink); }
+.slide-content { list-style: disc; padding-left: 22px; margin: 0; display: grid; gap: 8px; }
+.slide-content li { background: none; padding: 0; margin: 0; display: list-item;
+  color: var(--ink); border-radius: 0; }
+.slide-narration { border-left: 3px solid var(--accent); padding: 4px 0 4px 16px;
+  color: var(--muted); }
+.slide-narration-label { display: block; font-size: 11px; text-transform: uppercase;
+  letter-spacing: .1em; color: var(--accent); margin-bottom: 4px; }
+.slide-narration p { margin: 0; font-style: italic; }
+.slide-controls { display: flex; flex-direction: column; gap: 12px; }
+.slide-controls textarea { width: 100%; min-height: 80px; resize: vertical; padding: 10px 12px;
+  background: var(--bg); color: var(--ink); border: 1px solid #2a2f3a; border-radius: 8px;
+  font: inherit; }
+.slide-controls button { align-self: flex-start; background: var(--accent); color: #1a1410;
+  border: none; padding: 10px 20px; border-radius: 8px; font: inherit; font-weight: 600;
+  cursor: pointer; }
+.slide-controls button:disabled { opacity: .4; cursor: not-allowed; }
+.decision-actions { display: flex; gap: 12px; }
