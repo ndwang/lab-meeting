@@ -48,6 +48,19 @@ Confirmed current state of the codebase, maintained by the in-lane docs agents
     on 201 it replaces the stage with a `minutes-confirmed` banner ("Minutes recorded · next sprint
     queued"); on any non-201/network error it shows a `minutes-error` banner with a `minutes-retry`
     button that resets `submitStatus` to `null` so the human can re-click Approve/Redirect.
+    The slide stage and the Q&A panel render side by side inside a `meeting-stage` wrapper, so the
+    live Q&A aside is available throughout the meeting regardless of the current slide.
+- **client/src/QAPanel.jsx** — default export `QAPanel({ briefingId })`: the live Q&A aside.
+  Renders a "Ask a follow-up" textarea + Ask button (disabled while empty or while a POST is in
+  flight) and the running Q&A thread. On submit it `POST`s `/api/qa` (browser-facing, **no token**)
+  with `{ briefingId, question }`, optimistically appends the question to the thread in a
+  "pending — bringing in the engineer…" state, and clears the textarea. It polls
+  `GET /api/qa?briefingId=N` every 3s while any thread item is unanswered, replacing the thread with
+  each response; once the daemon-spawned host agent answers (`status === 'answered'`), the answer
+  renders attributed to "Claude — Engineer" and, when all items are answered, polling stops. The
+  interval is cleared on unmount. Each question shows a "You" label; a failed POST shows an inline
+  `qa-error` and re-enables the form without adding the question to the thread. Poll failures are
+  silent. Holds no slide state and never touches the slide-gating flow.
 - **client/src/SlideStage.jsx** — default export `SlideStage({ slides, currentIndex, answers,
   onContinue, onAnswer, onDecide })`: presentational component that renders one slide at a time —
   the title (`data-testid="slide-title"`), content bullets (`data-testid="slide-content"`),
@@ -66,13 +79,16 @@ Confirmed current state of the codebase, maintained by the in-lane docs agents
   `decision` is terminal — `decide(outcome, direction)` records the outcome without advancing.
   Captured answers/decision live in client state; `MeetingView` reads `decision` to POST the minutes.
 - **client/src/styles.css** — global styles plus `.back`, `.slide-stage`, `.slide-progress`,
-  `.slide-title`, `.slide-content`, `.slide-narration`, `.slide-controls`, and
-  `.decision-actions` CSS classes.
+  `.slide-title`, `.slide-content`, `.slide-narration`, `.slide-controls`, `.decision-actions`,
+  and the `.meeting-stage` / `.qa-*` (panel, thread, item, question, answer, author, pending,
+  form, error) CSS classes for the Q&A aside.
 - **client tests** — Vitest (`environment: 'jsdom'`, `globals: true`) configured in
   `client/vitest.config.js`; `@testing-library/jest-dom` matchers loaded from
   `client/src/__tests__/setup.js`. Run via `cd client && npm test`. Coverage:
-  `Router.test.jsx`, `MeetingView.test.jsx`, `__tests__/SlideStage.test.jsx`, and
-  `useMeetingState.test.js` — exercised against `briefings/sprint-1.json`.
+  `Router.test.jsx`, `MeetingView.test.jsx`, `__tests__/SlideStage.test.jsx`,
+  `useMeetingState.test.js` (exercised against `briefings/sprint-1.json`), and `QAPanel.test.jsx`
+  (mocked fetch + fake timers covering POST, pending state, polled answer, textarea clear, polling
+  stop, and POST-error handling).
 - **scripts/poll.mjs** — local loop-closer: polls `GET /api/next-sprint` (bearer token required) and
   drains the queue, launching the next sprint when a queued row is available; owned by the sprint runner.
 
