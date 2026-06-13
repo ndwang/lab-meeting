@@ -1,0 +1,61 @@
+{
+  "sprintId": "sprint-loop-demo",
+  "goal": "Loop demo (docs only): add a concise \"Architecture at a glance\" subsection to README.md summarizing the two systems and the HTTP control loop.",
+  "slides": [
+    {
+      "type": "info",
+      "title": "Architecture at a glance — shipped to README",
+      "content": [
+        "Spec: readme-architecture-at-a-glance (single docs-only work item)",
+        "Added '### Architecture at a glance' under existing '## Architecture'",
+        "Names both systems: local /sprint runner + deployed meeting app",
+        "Fenced diagram traces all 5 loop steps in order",
+        "briefings -> meeting -> minutes -> next-sprint -> poll.mjs",
+        "Delta vs spec: zero — built exactly to acceptance criteria"
+      ],
+      "narration": "This sprint was a pure documentation pass, and it landed clean. The directive from the last meeting was a single docs-only work item: add an 'Architecture at a glance' subsection to the README. We did exactly that. It sits inside the existing Architecture section, names both halves of the system — the local slash-sprint runner and the deployed meeting app — and includes a fenced diagram that traces the full control loop in order: POST briefings, the human meeting, POST minutes, GET next-sprint, and poll-dot-em-jay-ess launching the next sprint. There is no delta between spec and implementation here; the build matched every acceptance criterion."
+    },
+    {
+      "type": "info",
+      "title": "Scope discipline — what we did NOT touch",
+      "content": [
+        "Exactly one file changed: README.md (+12 lines, pure insertion)",
+        "No code, config, or test files modified",
+        "Existing Architecture bullets byte-identical",
+        "New subsection is 8 non-blank lines (cap was 10)",
+        "Reviewer: PASS on all six acceptance criteria"
+      ],
+      "narration": "I want to call out the scope discipline, because the directive was emphatic about keeping this tight. Exactly one file changed — the README — as a clean twelve-line insertion. No code, no config, no tests, nothing else. The existing Architecture bullet points are byte-identical to before. The new subsection is eight non-blank lines, comfortably under the ten-line cap we set in the spec. The implementation reviewer passed it on all six acceptance criteria with no caveats."
+    },
+    {
+      "type": "info",
+      "title": "Docs changed",
+      "content": [
+        "README.md: new '### Architecture at a glance' subsection",
+        "docs/ untouched — describes code internals, not the README",
+        "No history/changelog notes added (per docs-maintainer)",
+        "Verified via git diff --name-only: README.md only"
+      ],
+      "narration": "On documentation specifically: the only doc touched is the README itself. The docs folder describes code internals — server routes, client components, the scripts — so it had nothing to say about a README edit and was correctly left alone. We added no changelog or history notes, in keeping with our docs conventions, and confirmed with git diff that README is the sole file in the changeset."
+    },
+    {
+      "type": "decision",
+      "title": "Loop demo complete — what's next?",
+      "content": [
+        "This sprint closed the human-direction loop end to end, on docs",
+        "Approve: accept the README subsection as the loop demo artifact",
+        "Redirect options: Sprint 3 grounded Q&A (/api/qa), or voice/TTS",
+        "Or: tighten/expand the diagram wording before moving on"
+      ],
+      "narration": "That completes the loop demo. This was deliberately a small, low-risk task whose real purpose was to exercise the full control loop one more time — your redirect from last meeting became this sprint's marching orders, and here we are reporting back. The README now carries a clear at-a-glance picture of the whole system. So: do you approve this as the loop-demo artifact and move on to the next real feature — Sprint 3's grounded Q&A endpoint or the voice and TTS layer — or do you want to redirect, perhaps to refine the diagram wording first? Your call."
+    }
+  ],
+  "artifacts": {
+    "specDeltas": "Spec readme-architecture-at-a-glance: 6 acceptance criteria, all met with zero delta. (1) '### Architecture at a glance' heading present. (2) Names both systems: local /sprint runner + deployed meeting app. (3) Five-step loop in order: POST /api/briefings -> meeting -> POST /api/minutes -> GET /api/next-sprint -> poll.mjs launches next sprint. (4) Subsection body 8 non-blank lines (cap 10). (5) Only README.md modified. (6) Existing Architecture bullets unchanged (byte-identical). Implementation == spec; nothing deferred, nothing escalated.",
+    "gitLog": "f0fb76b Merge sprint/readme-architecture-at-a-glance: add Architecture at a glance subsection to README\n5a7e2d3 docs: add Architecture at a glance subsection to README\n693fce5 Sprint 2 cleanup: archive specs, track loop briefing\n3025c04 Merge sprint/get-next-sprint-endpoint\n9029360 Merge sprint/post-minutes-endpoint\nfde1497 Merge sprint/decision-slide-submission: Sprint 2 server (/api/minutes, /api/next-sprint) + decision-slide client wiring",
+    "diffs": "diff --git a/README.md b/README.md\nindex d750614..bad19a5 100644\n--- a/README.md\n+++ b/README.md\n@@ -29,6 +29,18 @@ Two systems joined over HTTP, not the filesystem:\n   built React/Vite SPA, backed by Postgres. The live URL.\n - **Loop-closer (`scripts/poll.mjs`, local):** drains queued sprints and launches them headless.\n \n+### Architecture at a glance\n+\n+The local `/sprint` runner and the deployed meeting app close one HTTP control loop:\n+\n+```\n+/sprint runner  --POST /api/briefings-->  meeting app  --(human meeting: review + redirect)-->\n+  POST /api/minutes  -->  GET /api/next-sprint  -->  poll.mjs launches the next /sprint\n+```\n+\n+The runner reports a briefing, the human redirects in the meeting, minutes are written, and\n+`poll.mjs` polls `/api/next-sprint` to launch the next sprint from that direction.\n+\n See `CLAUDE.md` for the full HTTP contract + briefing schema, `rubric.md` for acceptance criteria,\n and `initial_files/lab-meeting-design-doc.md` for the full design.",
+    "testOutput": "No `test` script in package.json — testStatus: no-tests. `npm run build` succeeded: client (vite v6.4.3) built for production, 31 modules transformed, dist/index.html + assets emitted in ~190ms. Only benign warnings (npm audit advisories, esbuild/fsevents allow-scripts notices); no errors. Acceptance verified via grep: 'Architecture at a glance', 'POST /api/briefings', 'POST /api/minutes', 'GET /api/next-sprint', 'poll.mjs' all match. git diff --name-only shows README.md only.",
+    "docsChanged": "Only README.md changed: added a '### Architecture at a glance' subsection (12-line insertion, 8 non-blank body lines) inside the existing '## Architecture' section. docs/ folder left untouched — it documents code internals (server routes, client components, scripts) and has no content about the README itself, so no update applied. No changelog/history notes added, per docs-maintainer conventions.",
+    "reviewerVerdicts": "Implementation review: PASS. specWrong=false. 'All six acceptance criteria are met. The ### Architecture at a glance heading is present. Both systems (local /sprint runner and deployed meeting app) are named. All five control-loop steps appear in order. The subsection is within the 10-line limit. Only README.md was modified (git diff --name-only confirms). The three existing Architecture bullet points are byte-identical to the original.' Integrate: clean --no-ff merge (f0fb76b), no conflicts, build green, no-tests."
+  }
+}
