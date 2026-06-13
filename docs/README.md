@@ -21,9 +21,24 @@ Confirmed current state of the codebase, maintained by the in-lane docs agents
   - `GET /api/next-sprint` — **requires the bearer token** (the local poller). Atomically claims the
     oldest `pending` queued sprint (`UPDATE ... FOR UPDATE SKIP LOCKED`, marks it `consumed` so it
     drains exactly once) and returns `{ goal, minutes }`; `204` when none pending.
+  - **Q&A channel** — store-and-forward relay; the server holds no LLM:
+    - `POST /api/qa` — browser-facing, **no token**. Body `{ briefingId, question }`. Inserts a
+      pending `qa` row via `db.insertQuestion`. Returns `201 { questionId }`. `400` if `briefingId`
+      is missing/null or `question` is missing/empty.
+    - `GET /api/qa?briefingId=N` — browser-facing, **no token**. Returns the full Q&A thread
+      `[{ id, question, answer, status, created_at }]` (oldest-first) via `db.listQAForBriefing`.
+      `400` if `briefingId` is absent or not a valid integer (never passes `undefined` to the db).
+    - `GET /api/qa/pending` — **requires the bearer token** (the attendant daemon). Atomically claims
+      the oldest `pending` question (`db.claimPendingQuestion`, marks it `claimed`) and returns
+      `200 { id, briefingId, question }`; `204` when none pending.
+    - `POST /api/qa/:id/answer` — **requires the bearer token**. Body `{ answer }`. Sets the answer
+      and marks the row `answered` via `db.answerQuestion`. Returns `200 { ok: true }`; `404` if the
+      id is unknown; `400` if `answer` is missing/empty.
   - `requireToken(req, reply)` returns a plain boolean (`true` = rejected, 401 sent) so guards
     short-circuit with `if (requireToken(...)) return;` — it must NOT be awaited.
-  Tested by `server/test/version.test.js`, `server/test/minutes.test.js`, and `server/test/qa.test.js` (`cd server && npm test`).
+  Tested by `server/test/version.test.js`, `server/test/minutes.test.js`,
+  `server/test/qa.db.test.js` (the Q&A storage functions), and
+  `server/test/qa.routes.test.js` (the Q&A routes) (`cd server && npm test`).
 - **server/src/index.js** — entrypoint: requires `DATABASE_URL`, `LAB_MEETING_TOKEN`, `PORT`
   (fails fast if missing), connects the DB, then listens.
 - **server/src/db.js** — Postgres via `pg`; requires `DATABASE_URL`, no fallback. Tables:
@@ -83,4 +98,5 @@ Confirmed current state of the codebase, maintained by the in-lane docs agents
 - **scripts/poll.mjs** — local loop-closer: polls `GET /api/next-sprint` (bearer token required) and
   drains the queue, launching the next sprint when a queued row is available; owned by the sprint runner.
 
-Not yet built: `/api/qa` HTTP routes (the Q&A storage layer in `db.js` is built; the Fastify route handlers are in the server-routes lane), voice/TTS/ASR.
+Not yet built: client Q&A UI (the meeting-view follow-up box that posts to `/api/qa` and polls for
+the answer), voice/TTS/ASR.

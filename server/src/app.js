@@ -13,6 +13,10 @@ import {
   insertMinutes,
   enqueueSprint,
   claimNextSprint,
+  insertQuestion,
+  claimPendingQuestion,
+  answerQuestion,
+  listQAForBriefing,
 } from './db.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -49,6 +53,10 @@ const realDb = {
   insertMinutes,
   enqueueSprint,
   claimNextSprint,
+  insertQuestion,
+  claimPendingQuestion,
+  answerQuestion,
+  listQAForBriefing,
 };
 
 export async function buildApp({ db = realDb } = {}) {
@@ -140,6 +148,53 @@ export async function buildApp({ db = realDb } = {}) {
     const next = await db.claimNextSprint();
     if (!next) return reply.code(204).send();
     return reply.code(200).send({ goal: next.goal, minutes: next.minutes });
+  });
+
+  // ---- Q&A channel: a store-and-forward relay. The server holds no LLM; it
+  // only buses questions to the host agent (the attendant daemon) and answers
+  // back to the browser.
+
+  // Browser posts a follow-up during the meeting. No bearer token (human action).
+  app.post('/api/qa', async (req, reply) => {
+    const { briefingId, question } = req.body ?? {};
+    if (briefingId == null || !question) {
+      return reply.code(400).send({ error: 'briefingId and question are required' });
+    }
+    const questionId = await db.insertQuestion({ briefingId, question });
+    req.log.info({ questionId, briefingId }, 'question posted');
+    return reply.code(201).send({ questionId });
+  });
+
+  // Browser polls the full Q&A thread for a briefing. No bearer token.
+  // Registered before the parameterized claim/answer routes; query-param routing
+  // keeps it distinct from GET /api/qa/pending.
+  app.get('/api/qa', async (req, reply) => {
+    const raw = req.query.briefingId;
+    const briefingId = Number(raw);
+    if (raw == null || raw === '' || !Number.isInteger(briefingId)) {
+      return reply.code(400).send({ error: 'briefingId is required' });
+    }
+    return db.listQAForBriefing(briefingId);
+  });
+
+  // Host agent (attendant daemon) claims the oldest pending question. Bearer token.
+  app.get('/api/qa/pending', async (req, reply) => {
+    if (requireToken(req, reply)) return;
+    const claimed = await db.claimPendingQuestion();
+    if (!claimed) return reply.code(204).send();
+    return reply.code(200).send(claimed);
+  });
+
+  // Host agent posts the grounded answer back. Bearer token.
+  app.post('/api/qa/:id/answer', async (req, reply) => {
+    if (requireToken(req, reply)) return;
+    const { answer } = req.body ?? {};
+    if (!answer) {
+      return reply.code(400).send({ error: 'answer is required' });
+    }
+    const updated = await db.answerQuestion({ id: req.params.id, answer });
+    if (!updated) return reply.code(404).send({ error: 'not found' });
+    return reply.code(200).send({ ok: true });
   });
 
   // Built SPA with history-API fallback (client routing, not a compat fallback).

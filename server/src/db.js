@@ -29,7 +29,8 @@ CREATE TABLE IF NOT EXISTS sprint_queue (
 );
 
 -- Live Q&A channel. The browser posts a pending question; the host agent
--- claims it, answers grounded in the briefing, and posts the answer back.
+-- (attendant daemon) claims it, answers grounded in the briefing, and posts
+-- the answer back; the browser polls for it.
 CREATE TABLE IF NOT EXISTS qa (
   id          SERIAL PRIMARY KEY,
   briefing_id INTEGER REFERENCES briefings(id),
@@ -109,7 +110,8 @@ export async function claimNextSprint() {
   return rows[0] ?? null;
 }
 
-// Store a human's follow-up as a pending Q&A row. Returns the new row id.
+// Insert a browser-posted follow-up question as a pending Q&A row. Returns the
+// new row id. created_at is server-stamped.
 export async function insertQuestion({ briefingId, question }) {
   const { rows } = await pool.query(
     "INSERT INTO qa (briefing_id, question, status) VALUES ($1, $2, 'pending') RETURNING id",
@@ -118,9 +120,9 @@ export async function insertQuestion({ briefingId, question }) {
   return rows[0].id;
 }
 
-// Atomically claim the oldest pending question for the host agent to answer,
-// marking it 'claimed' so it is handed out exactly once even under concurrent
-// pollers. Returns { id, briefingId, question } or null when none pending.
+// Atomically claim the oldest pending question, marking it 'claimed' so the
+// host agent picks up each question exactly once even under concurrent pollers.
+// Returns { id, briefingId, question } or null when none are pending.
 export async function claimPendingQuestion() {
   const { rows } = await pool.query(
     `UPDATE qa
@@ -140,7 +142,7 @@ export async function claimPendingQuestion() {
 }
 
 // Record the host agent's answer and mark the question answered. Returns true
-// if a row matched the id, false otherwise.
+// if a row was updated, false if the id did not match any row.
 export async function answerQuestion({ id, answer }) {
   const { rowCount } = await pool.query(
     "UPDATE qa SET answer = $2, status = 'answered' WHERE id = $1",
