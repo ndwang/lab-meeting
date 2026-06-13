@@ -1,0 +1,62 @@
+{
+  "sprintId": "sprint-1",
+  "goal": "Add a GET /api/version endpoint to buildApp() that returns { version } read from the root package.json, with an app.inject() test, an npm test script, and docs.",
+  "slides": [
+    {
+      "type": "info",
+      "title": "Shipped: GET /api/version",
+      "content": [
+        "One spec, one lane, one work item — all 6 acceptance criteria met",
+        "Route registered in buildApp() (server/src/app.js), right after /api/health",
+        "version read once at module load from root package.json via readFileSync + path.resolve(__dirname, '../../package.json') — file-relative, not hard-coded",
+        "No DB, no auth — purely additive, stable HTTP contract untouched",
+        "Spec-vs-impl delta: zero — implementation matches the spec exactly"
+      ],
+      "narration": "This sprint was a single, tight work item: add a GET /api/version endpoint. It's shipped and merged. The route lives inside buildApp in server slash src slash app dot js, right after the health check, and it returns a JSON object with one key, version. That version isn't hard-coded — it's read once at module load from the repo root package dot json, using a file-relative path so it resolves no matter what directory the server starts from. There's no database and no auth involved, which keeps it consistent with the rest of buildApp and makes it trivially testable. The implementation matched the spec exactly — there was no delta between what we planned and what we built."
+    },
+    {
+      "type": "info",
+      "title": "Test & verification",
+      "content": [
+        "New test: server/test/version.test.js — uses app.inject(), no database",
+        "Asserts: status 200, body keys deep-equal ['version'], non-empty string, equals root package.json version",
+        "Boundary covered: test reads package.json file-relative, so it passes from any CWD",
+        "npm test script added to server/package.json: 'node --test test/version.test.js'",
+        "Integration: npm run build green; cd server && npm test green (1 pass, 0 fail, exit 0)"
+      ],
+      "narration": "Coverage is solid for the scope. The new test in server slash test slash version dot test dot js uses app dot inject, so it exercises the route in-process with no database. It checks the status is two hundred, that the body has exactly one key — version — that it's a non-empty string, and that it equals the version in the root package dot json. It even covers the boundary case: the test resolves the package file relative to its own location, so it passes regardless of the working directory. We wired up an npm test script in server slash package dot json, and integration confirmed everything is green — the client build passes and npm test reports one passing test with a clean exit."
+    },
+    {
+      "type": "info",
+      "title": "Docs changed",
+      "content": [
+        "docs/README.md current-state section updated",
+        "GET /api/version listed alongside GET /api/health in the buildApp() bullet",
+        "Notes it reads from root package.json at module load, no DB / no auth",
+        "References server/test/version.test.js and 'cd server && npm test'",
+        "Single docs file, no cross-doc contradictions, no history notes"
+      ],
+      "narration": "Docs are current. The current-state section of docs slash README dot md now lists GET slash api slash version next to the health endpoint inside the buildApp bullet. It notes that the version is read from the root package dot json at module load with no database and no auth, and it points at the test file and the npm test command. There's only one doc file in docs, and the docs-maintainer pass confirmed no contradictions and no leftover history notes."
+    },
+    {
+      "type": "decision",
+      "title": "Decision: approve and pick next sprint",
+      "content": [
+        "Sprint-1 complete: GET /api/version shipped, tested, documented, merged to main",
+        "Reviewer verdict: PASS — all 6 acceptance criteria met, no contract weakened",
+        "No escalations, no unresolved items, no open questions",
+        "Proposed next (Sprint 2): implement POST /api/minutes + GET /api/next-sprint and scripts/poll.mjs to close the human-direction loop",
+        "Approve to proceed, or Redirect to a different next work item"
+      ],
+      "narration": "That wraps the sprint. The single work item — GET slash api slash version — is shipped, tested, documented, and merged to main with a clean reviewer pass against all six acceptance criteria. There are no escalations and no open questions, so nothing is blocking you. For next steps I'd propose moving on to Sprint 2 from the HTTP contract: implementing POST slash api slash minutes and GET slash api slash next-sprint, plus the local poller in scripts slash poll dot m j s, to close the loop where your direction in the meeting becomes the next sprint's input. If that sounds right, approve to proceed; otherwise redirect me to whatever you'd rather tackle next."
+    }
+  ],
+  "artifacts": {
+    "specDeltas": "Spec: specs/version-endpoint.md (id: version-endpoint, 'Add GET /api/version endpoint with test and docs'). Delta between spec and implementation: NONE. All 6 acceptance criteria met as written. AC1 200 OK; AC2 body has exactly one key 'version' equal to root package.json '0.1.0'; AC3 route registered in buildApp() in server/src/app.js; AC4 version read from root package.json at module load via readFileSync (not hard-coded); AC5 npm test from server/ exits 0 with a passing assertion; AC6 docs/README.md lists GET /api/version. Constraints honored: path resolved file-relative (../../package.json); no DB needed; 'type':'module' not added (already present in server/package.json).",
+    "gitLog": "7cf4c21 Merge sprint/version-endpoint: add GET /api/version endpoint\n3d31821 Add GET /api/version endpoint\n2325c9f Adopt fail-fast master rules; install spec-review + docs-maintainer skills\nd193c7e Add the /sprint dynamic workflow\n73f1ddc Kickoff: deployable Lab Meeting skeleton\n\nMerged branch: sprint/version-endpoint (--no-ff). Range 2325c9f..7cf4c21. No conflicts. Worktree .worktrees/version-endpoint cleaned up; local sprint branch deleted.",
+    "diffs": "server/src/app.js:\n  + import { existsSync, readFileSync } from 'node:fs';   (was: existsSync only)\n  + const { version } = JSON.parse(readFileSync(path.resolve(__dirname, '../../package.json'), 'utf8'));   // module load, fail-fast\n  + app.get('/api/version', async () => ({ version }));   // inside buildApp(), after /api/health, no DB/no auth\n\nserver/package.json scripts:\n  + \"test\": \"node --test test/version.test.js\"\n\nserver/test/version.test.js (new, 36 lines): node:test + node:assert/strict; reads rootPkg file-relative; buildApp() then app.inject({method:'GET',url:'/api/version'}); asserts statusCode 200, Object.keys(body) deepEqual ['version'], typeof version === 'string', length > 0, body.version === rootPkg.version; t.after(() => app.close()).\n\ndocs/README.md: buildApp() bullet expanded to list GET /api/version ({ version } from root package.json at module load, no DB/no auth) and reference server/test/version.test.js + 'cd server && npm test'.",
+    "testOutput": "npm run build: green (vite built client, 27 modules, dist/index.html + assets emitted).\ncd server && npm test: 1 test, 1 pass, 0 fail, exit 0 — 'GET /api/version returns the root package.json version' passed, responded 200.\nManual CWD-independence check from /tmp: inject of GET /api/version printed 200 {\"version\":\"0.1.0\"} — confirms file-relative path resolution.",
+    "docsChanged": "docs/README.md — current-state section. The buildApp() bullet now lists GET /api/version returning { version } read from root package.json at module load (no DB/no auth) alongside GET /api/health, and references the test file (server/test/version.test.js) and command (cd server && npm test). Single doc file in docs/; no cross-doc contradictions; no history notes per docs-maintainer convention.",
+    "reviewerVerdicts": "version-endpoint: PASS (specWrong: false). All 6 acceptance criteria verified. AC1 200 via test output. AC2 Object.keys(body) deepEquals ['version'] and body.version === rootPkg.version ('0.1.0'). AC3 route at server/src/app.js inside buildApp() (line ~39). AC4 readFileSync with path.resolve(__dirname,'../../package.json') — not hard-coded. AC5 npm test exits 0, pass 1 fail 0. AC6 docs/README.md updated. Path file-relative; no 'type':'module' added; no DB for route or test. No contract weakened (purely additive). No escalated contract issue."
+  }
+}

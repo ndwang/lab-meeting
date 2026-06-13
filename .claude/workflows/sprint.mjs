@@ -15,11 +15,13 @@ export const meta = {
 // Inputs. Launched as `/sprint with goal '...' and minutes '...'` (or via the
 // poller). Read defensively: args may be an object, a string, or undefined.
 // ---------------------------------------------------------------------------
-const goal =
-  (args && typeof args === 'object' && args.goal) ||
-  (typeof args === 'string' && args) ||
-  'Advance the project per the latest meeting minutes and CLAUDE.md.'
-const minutes = (args && typeof args === 'object' && args.minutes) || ''
+// args may arrive as an object, a JSON string, or a bare goal string.
+let input = args
+if (typeof input === 'string') {
+  try { input = JSON.parse(input) } catch { input = { goal: input } }
+}
+const goal = (input && input.goal) || 'Advance the project per the latest meeting minutes and CLAUDE.md.'
+const minutes = (input && input.minutes) || ''
 
 const MAX_SPEC_REVIEW_ROUNDS = 2
 const MAX_BUILD_ATTEMPTS = 3 // 1 build + 2 retries with objections attached
@@ -370,6 +372,7 @@ Then:
       -H "content-type: application/json" -H "authorization: Bearer $LAB_MEETING_TOKEN" \
       --data @./briefings/<sprintId>.json\`
    Capture the HTTP status and the returned briefingId. A 201 means the meeting was requested.
+   Make EXACTLY ONE POST — if it returns 201 you are done, do not POST again (duplicates create duplicate meetings).
 
 Return the structured result. If the POST did not return 201, set posted=false and explain in summary.`,
   { schema: REPORT_RESULT_SCHEMA, label: 'reporter' }
