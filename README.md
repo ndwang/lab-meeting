@@ -1,53 +1,73 @@
 # Lab Meeting
 
-**A human-in-the-loop layer for long-horizon agents.** Agents work autonomously in sprints, then
-report to their human the way PhD students report to a PI — at a lab meeting. After each sprint a
-reporter agent compiles a briefing of structured slides, posts it to this app, and requests a
-meeting. The human reviews by voice/text, asks grounded follow-ups, and gives direction; that
-direction becomes the next sprint's marching orders. Minutes carry across sprints.
+**A communication layer, a meeting format, and a voice — so you can stay in command of
+long-horizon agents.** Agents already ping their owners over Slack/Discord, but those are
+unstructured interrupts. Lab Meeting gives them the oldest human-in-the-loop protocol there is:
+agents report to their human the way PhD students report to a PI — at a **lab meeting**. After a
+work sprint, an agent posts a structured briefing; the human reviews it as a page-gated,
+voice-driven meeting, asks follow-ups answered live and grounded in the real work, and gives
+direction; that direction becomes the next sprint's marching orders. Minutes carry across sprints.
+
+We don't host your agents. We provide the room, the format, and the voice — your agent runs
+wherever it already runs.
 
 Built for Claude Build Day, 2026-06-13, with Opus 4.8.
 
 ## The brief
 
 - **Problem:** as agents work autonomously for hours across hundreds of subagents, humans lose the
-  thread. Dynamic workflows are fire-and-forget; Anthropic's docs say human sign-off between stages
-  means chaining workflow runs — but nobody built the sign-off layer. This is that layer.
+  thread. Dynamic workflows are fire-and-forget; the answer so far is logs and dashboards nobody
+  reads. The bottleneck is shifting from "can the agent do it" to "can the human stay in command."
 - **Who it's for:** anyone running long-horizon agentic work (programmers, auto-research) who needs
-  to stay in command without reading logs nobody reads.
-- **Done looks like:** a deployed URL where a real sprint's briefing is presented as a gated
-  meeting, the human redirects on a decision slide, minutes are written, and the next sprint
-  launches from those minutes — one full control loop, live.
+  to direct it without babysitting it.
+- **Done looks like:** a deployed URL where a real sprint's briefing is presented as a gated,
+  spoken meeting; the human asks a question and an agent answers live from the actual code; the
+  human redirects; that redirect becomes the next sprint's instruction and it launches — one full
+  control loop, live.
 
-## Architecture
+## The two things we provide
 
-Two systems joined over HTTP, not the filesystem:
+1. **A meeting format** — a briefing as structured slides (`info` / `question` / `decision`), with
+   turn-taking, hard gates on questions, a closing decision, and minutes that carry across sprints.
+   The cadence, format, and power-dynamic of a lab meeting, as a protocol.
+2. **An audio interface** — slides are spoken (TTS) and the human answers by push-to-talk (ASR), so
+   it *feels* like a meeting, not a chat log. Browser-native, with a text path that always works.
 
-- **Sprint runner (local):** the `/sprint` dynamic workflow in Claude Code. Ends by `POST`ing a
-  briefing to `/api/briefings`.
-- **Meeting app (deployed — this repo's `server/` + `client/`):** Fastify API that serves the
-  built React/Vite SPA, backed by Postgres. The live URL.
-- **Loop-closer (`scripts/poll.mjs`, local):** drains queued sprints and launches them headless.
+## Architecture: the meeting room and the lab
 
-### Architecture at a glance
+The deployed app is the **meeting room**; your machine is the **lab** where agents run. They're
+joined over HTTP — the app holds no LLM and no API key, it's a message bus + UI.
 
-The local `/sprint` runner and the deployed meeting app close one HTTP control loop:
+- **Meeting app (deployed — `server/` + `client/`):** Fastify API serving a React/Vite SPA, backed
+  by Postgres. Stores briefings/minutes, renders the meeting, relays questions/answers. The live URL.
+- **The lab (local):** `scripts/poll.mjs` is the **attendant daemon** — the lab's standing presence.
+  It launches queued sprints and, during a meeting, spawns an ephemeral **host agent** to field Q&A.
+- **The handoff (agents are ephemeral; artifacts are the baton):**
 
 ```
-/sprint runner  --POST /api/briefings-->  meeting app  --(human meeting: review + redirect)-->
-  POST /api/minutes  -->  GET /api/next-sprint  -->  poll.mjs launches the next /sprint
+sprint reporter ──POST /api/briefings──▶ meeting room
+   human opens the meeting ──▶ attendant daemon spawns a HOST AGENT (briefing + live repo)
+      human asks ◀──live grounded Q&A──▶ host agent
+      human redirects ──▶ host agent composes minutes + the next instruction
+         ──▶ shown back on the decision slide ──▶ human APPROVES
+            ──▶ attendant daemon launches the next sprint (minutes injected)
 ```
 
-The runner reports a briefing, the human redirects in the meeting, minutes are written, and
-`poll.mjs` polls `/api/next-sprint` to launch the next sprint from that direction.
+The host agent is spawned fresh per meeting, briefed by the artifact and live on the repo — so Q&A
+is grounded in the real code, including the honest "that wasn't tested." The persistent daemon is
+the only launcher; the ephemeral host is the composer.
 
-See `CLAUDE.md` for the full HTTP contract + briefing schema, `rubric.md` for acceptance criteria,
-and `initial_files/lab-meeting-design-doc.md` for the full design.
+**Two integration tiers:** *add one curl* (a workflow `POST`s a briefing) → async briefings +
+minutes; *run the attendant daemon, or be a long-horizon agent on the MCP tools* → live grounded
+Q&A. The `/sprint` dynamic workflow in this repo is our own dogfood example of a consumer — the
+agents that build Lab Meeting report their progress through it.
+
+See `CLAUDE.md` for the full HTTP contract + briefing schema, and `rubric.md` for acceptance criteria.
 
 ## Run locally
 
 ```bash
-cp .env.example .env         # then fill in DATABASE_URL, LAB_MEETING_TOKEN, PORT
+cp .env.example .env         # fill in DATABASE_URL, LAB_MEETING_TOKEN, PORT
 npm run install:all          # install server + client
 npm run build                # build the client
 npm start                    # serve API + client (fails fast if required env is missing)
@@ -55,23 +75,21 @@ npm start                    # serve API + client (fails fast if required env is
 # or, two terminals for hot reload:
 npm run dev:server
 npm run dev:client           # proxies /api to :3000
-```
 
-Smoke-test the ingest contract:
-
-```bash
-curl -s localhost:3000/api/health
-curl -s -X POST localhost:3000/api/briefings -H 'content-type: application/json' \
-  -d '{"sprintId":"sprint-0","goal":"smoke test","slides":[{"type":"info","title":"Hello","content":["it works"],"narration":"Hi."}]}'
-curl -s localhost:3000/api/briefings
+# the local lab daemon (launches queued sprints, hosts Q&A):
+node --env-file=.env scripts/poll.mjs
 ```
 
 ## Deploy (Render)
 
-Push to GitHub, then **New → Blueprint** and point it at this repo. `render.yaml` provisions the
-web service + Postgres and generates `LAB_MEETING_TOKEN`. Set `ANTHROPIC_API_KEY` in the dashboard.
+Push to GitHub, then **New → Blueprint** at the repo. `render.yaml` provisions the web service +
+Postgres and generates `LAB_MEETING_TOKEN`. No API key needed on the server — it holds no LLM.
 
 ## Status
 
-Kickoff skeleton: deployable hello-world + ingest endpoint. Sprint 1 adds the meeting UI; Sprint 2
-closes the loop; Sprint 3 adds grounded Q&A and voice; Sprint 4 adds the Zoom skin.
+- **Built & live:** deployed meeting app; briefing ingest; the meeting view (page-gated slides +
+  decision); `POST /api/minutes` + `GET /api/next-sprint`; the attendant daemon launching the next
+  sprint headless — the full control loop, proven end to end on the live URL.
+- **Next:** live grounded Q&A (daemon spawns the host agent), host-composed next instruction with
+  the visible approval beat, client-side voice (TTS + push-to-talk ASR), and an MCP server so any
+  MCP-capable agent plugs in natively.
