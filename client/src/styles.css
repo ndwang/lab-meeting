@@ -52,3 +52,26 @@ li strong { color: var(--accent); }
   cursor: pointer; }
 .slide-controls button:disabled { opacity: .4; cursor: not-allowed; }
 .decision-actions { display: flex; gap: 12px; }
+
+/* Q&A aside — live follow-up channel alongside the slide stage. */
+.meeting-stage { display: grid; gap: 20px; }
+.qa-panel { background: var(--panel); border-radius: 14px; padding: 24px;
+  display: flex; flex-direction: column; gap: 16px; }
+.qa-thread { display: flex; flex-direction: column; gap: 16px; }
+.qa-item { background: var(--bg); border-radius: 10px; padding: 14px 16px;
+  display: flex; flex-direction: column; gap: 10px; margin: 0; }
+.qa-question, .qa-answer { display: flex; flex-direction: column; gap: 4px; }
+.qa-question p, .qa-answer p { margin: 0; color: var(--ink); }
+.qa-author { font-size: 11px; text-transform: uppercase; letter-spacing: .1em; }
+.qa-author-you { color: var(--muted); }
+.qa-author-agent { color: var(--accent); }
+.qa-pending { color: var(--muted); font-style: italic; font-size: 14px; }
+.qa-form { display: flex; flex-direction: column; gap: 12px; }
+.qa-form textarea { width: 100%; min-height: 64px; resize: vertical; padding: 10px 12px;
+  background: var(--bg); color: var(--ink); border: 1px solid #2a2f3a; border-radius: 8px;
+  font: inherit; }
+.qa-form button { align-self: flex-start; background: var(--accent); color: #1a1410;
+  border: none; padding: 10px 20px; border-radius: 8px; font: inherit; font-weight: 600;
+  cursor: pointer; }
+.qa-form button:disabled { opacity: .4; cursor: not-allowed; }
+.qa-error { color: var(--rec); margin: 0; font-size: 14px; }

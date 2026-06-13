@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import SlideStage from './SlideStage.jsx';
+import QAPanel from './QAPanel.jsx';
 import { useMeetingState } from './useMeetingState.js';
 
 // The meeting page. Owns the top-level data fetch for a single briefing, the
@@ -129,14 +130,17 @@ function Meeting({ briefing, briefingId }) {
           {briefing.goal}
         </p>
       </section>
-      <SlideStage
-        slides={briefing.slides}
-        currentIndex={state.currentIndex}
-        answers={state.answers}
-        onContinue={state.continue}
-        onAnswer={state.answer}
-        onDecide={state.decide}
-      />
+      <div className="meeting-stage">
+        <SlideStage
+          slides={briefing.slides}
+          currentIndex={state.currentIndex}
+          answers={state.answers}
+          onContinue={state.continue}
+          onAnswer={state.answer}
+          onDecide={state.decide}
+        />
+        <QAPanel briefingId={briefingId} />
+      </div>
       {submitStatus === 'error' && (
         <SubmitError onRetry={() => setSubmitStatus(null)} />
       )}
