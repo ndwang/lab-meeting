@@ -14,10 +14,9 @@ Confirmed current state of the codebase, maintained by the in-lane docs agents
     module load; no DB, no auth.
   - `POST /api/briefings` — bearer token; ingests a briefing. `GET /api/briefings[/:id]` — reads.
   - `POST /api/minutes` — browser-facing, **no token**. Body `{ briefingId, outcome:
-    'approve'|'redirect', directive, answers? }`. Persists a `minutes` row (outcome + full payload),
-    then enqueues a `sprint_queue` row with `goal=directive` and a rendered `minutes` text (outcome,
-    directive, any answers). Returns `{ minutesId, queuedSprintId }`. 400 if `briefingId`/`outcome`/
-    `directive` missing or `outcome` invalid.
+    'approve'|'redirect', directive, answers? }`. Persists a `minutes` row via `db.insertMinutes`
+    and enqueues the next sprint via `db.enqueueSprint`. Returns `{ minutesId, queuedSprintId }`.
+    400 if `briefingId`/`outcome`/`directive` missing or `outcome` invalid.
   - `GET /api/next-sprint` — **requires the bearer token** (the local poller). Atomically claims the
     oldest `pending` queued sprint (`UPDATE ... FOR UPDATE SKIP LOCKED`, marks it `consumed` so it
     drains exactly once) and returns `{ goal, minutes }`; `204` when none pending.
