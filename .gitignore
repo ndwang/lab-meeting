@@ -3,6 +3,9 @@ node_modules/
 client/dist/
 *.log
 
+# per-item work lanes created by the /sprint workflow
+.worktrees/
+
 # env / secrets
 .env
 .env.*
