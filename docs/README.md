@@ -27,9 +27,16 @@ Confirmed current state of the codebase, maintained by the in-lane docs agents
 - **server/src/index.js** — entrypoint: requires `DATABASE_URL`, `LAB_MEETING_TOKEN`, `PORT`
   (fails fast if missing), connects the DB, then listens.
 - **server/src/db.js** — Postgres via `pg`; requires `DATABASE_URL`, no fallback. Tables:
-  `briefings`, `minutes`, `sprint_queue`. Functions: `insertBriefing`, `listBriefings`,
+  `briefings`, `minutes`, `sprint_queue`, `qa`. Functions: `insertBriefing`, `listBriefings`,
   `getBriefing`, `insertMinutes`, `enqueueSprint`, `claimNextSprint` (atomic claim of the oldest
-  pending queued sprint).
+  pending queued sprint). Q&A channel functions: `insertQuestion({ briefingId, question })` inserts
+  a `pending` `qa` row and returns its id; `claimPendingQuestion()` atomically claims the oldest
+  `pending` question (`UPDATE ... FOR UPDATE SKIP LOCKED`, marks it `claimed`) and returns
+  `{ id, briefingId, question }` or `null` when none pending; `answerQuestion({ id, answer })` sets
+  the answer and marks the row `answered`, returning `true` if a row matched else `false`;
+  `listQAForBriefing(briefingId)` returns the thread `[{ id, question, answer, status, created_at }]`
+  oldest-first. The `qa` table: `id`, `briefing_id` (FK → briefings), `question`, nullable `answer`,
+  `status` (`pending`|`claimed`|`answered`, default `pending`), server-stamped `created_at`.
 - **server/src/env.js** — `requireEnv(name)`: fail-fast env lookup, no default values.
 - **client/** — React 18 + Vite 6 SPA with hash-based client-side routing (no router dependency).
   - `src/main.jsx` mounts `src/Router.jsx`.
