@@ -23,6 +23,7 @@ const URL_BASE = requireEnv('LAB_MEETING_URL').replace(/\/$/, '');
 const TOKEN = requireEnv('LAB_MEETING_TOKEN');
 const SPRINT_INTERVAL_MS = 5000;
 const QA_INTERVAL_MS = 4000;
+const COMPOSE_INTERVAL_MS = 4000;
 const WORKFLOW = '.claude/workflows/sprint.mjs';
 
 // Spawn a headless claude that inherits this process's env (so its Bash sees
@@ -91,8 +92,46 @@ async function qaTick() {
   });
 }
 
-console.log(`[poll] attendant daemon watching ${URL_BASE} — sprints every ${SPRINT_INTERVAL_MS}ms, Q&A every ${QA_INTERVAL_MS}ms`);
+// --- 3. compose loop --------------------------------------------------------
+// When the human resolves a decision, a host agent writes up the meeting: the
+// next-sprint goal + the minutes. The human approves it before it launches.
+let composeRunning = false;
+
+async function composeTick() {
+  if (composeRunning) return;
+  let res;
+  try {
+    res = await fetch(`${URL_BASE}/api/compose/pending`, { headers: { authorization: `Bearer ${TOKEN}` } });
+  } catch (e) { console.error('[poll] compose/pending unreachable:', e.message); return; }
+  if (res.status === 204) return;
+  if (!res.ok) { console.error('[poll] compose/pending status', res.status); return; }
+  const { minutesId, briefingId, outcome, directive, answers } = await res.json();
+  composeRunning = true;
+  console.log(`[poll] composing the next instruction — meeting on briefing ${briefingId} (${outcome}):\n        ${String(directive).slice(0, 120)}`);
+  const prompt =
+    `You are the meeting attendant writing up a lab meeting. The PI just resolved the decision on briefing ${briefingId} ` +
+    `with outcome "${outcome}". Their direction: ${JSON.stringify(directive)}. ` +
+    `${Array.isArray(answers) && answers.length ? `Answers to question slides: ${JSON.stringify(answers)}. ` : ''}` +
+    `Compose two things for the NEXT sprint, grounded in the briefing (fetch ${URL_BASE}/api/briefings/${briefingId}), ` +
+    `the live repo, and the meeting Q&A (fetch ${URL_BASE}/api/qa?briefingId=${briefingId}): ` +
+    `(1) a crisp, narrow, spec-able sprint GOAL — if outcome is "approve", adopt the briefing's proposed next steps; if ` +
+    `"redirect", follow the PI's direction. Make it concrete and bounded, the way a good sprint goal reads. ` +
+    `(2) MINUTES text — a short record of the decision, deferred items, and the PI's stated preferences (the standing ` +
+    `direction the next sprint reads). ` +
+    `Then POST exactly once (token in $LAB_MEETING_TOKEN): write {"goal":"...","minutesText":"..."} to ` +
+    `/tmp/compose-${minutesId}.json and curl -sS -X POST "${URL_BASE}/api/minutes/${minutesId}/instruction" ` +
+    `-H "content-type: application/json" -H "authorization: Bearer $LAB_MEETING_TOKEN" --data @/tmp/compose-${minutesId}.json. ` +
+    `Then reply with only the composed goal.`;
+  spawnClaude(prompt, (_err, code) => {
+    console.log(`[poll] instruction composed for minutes ${minutesId} (code ${code ?? 'err'}).`);
+    composeRunning = false;
+  });
+}
+
+console.log(`[poll] attendant daemon watching ${URL_BASE} — sprints/${SPRINT_INTERVAL_MS}ms, Q&A/${QA_INTERVAL_MS}ms, compose/${COMPOSE_INTERVAL_MS}ms`);
 setInterval(sprintTick, SPRINT_INTERVAL_MS);
 setInterval(qaTick, QA_INTERVAL_MS);
+setInterval(composeTick, COMPOSE_INTERVAL_MS);
 sprintTick();
 qaTick();
+composeTick();
