@@ -2,7 +2,7 @@
 // listen — so routes are testable via app.inject() without a database.
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { existsSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import Fastify from 'fastify';
 import cors from '@fastify/cors';
 import fastifyStatic from '@fastify/static';
@@ -10,6 +10,13 @@ import { insertBriefing, listBriefings, getBriefing } from './db.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const clientDist = path.resolve(__dirname, '../../client/dist');
+
+// Read the repo's version once at module load from the root package.json,
+// resolved file-relative so it works regardless of CWD. Throws (fail-fast) if
+// the file is missing or unparseable.
+const { version } = JSON.parse(
+  readFileSync(path.resolve(__dirname, '../../package.json'), 'utf8'),
+);
 
 export async function buildApp() {
   const app = Fastify({ logger: true });
@@ -26,6 +33,10 @@ export async function buildApp() {
   }
 
   app.get('/api/health', async () => ({ ok: true, service: 'lab-meeting' }));
+
+  // Reports the repo's build version so consumers can confirm which build is
+  // running. No DB, no auth.
+  app.get('/api/version', async () => ({ version }));
 
   // The reporter agent ends every sprint by POSTing its briefing JSON here.
   app.post('/api/briefings', async (req, reply) => {

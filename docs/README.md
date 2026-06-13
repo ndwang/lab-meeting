@@ -6,9 +6,11 @@ Confirmed current state of the codebase, maintained by the in-lane docs agents
 
 ## Current state (kickoff)
 
-- **server/src/app.js** — `buildApp()`: Fastify routes (`GET /api/health`, `POST /api/briefings`
-  with bearer token, `GET /api/briefings[/:id]`) + built-client serving with SPA fallback. No DB
-  connect, no listen, so routes are testable via `app.inject()`.
+- **server/src/app.js** — `buildApp()`: Fastify routes (`GET /api/health`; `GET /api/version`
+  returns `{ version }` read from the root `package.json` at module load, no DB/no auth;
+  `POST /api/briefings` with bearer token, `GET /api/briefings[/:id]`) + built-client serving with
+  SPA fallback. No DB connect, no listen, so routes are testable via `app.inject()`.
+  Tested by `server/test/version.test.js` (`cd server && npm test`).
 - **server/src/index.js** — entrypoint: requires `DATABASE_URL`, `LAB_MEETING_TOKEN`, `PORT`
   (fails fast if missing), connects the DB, then listens.
 - **server/src/db.js** — Postgres via `pg`; requires `DATABASE_URL`, no fallback. Tables:
