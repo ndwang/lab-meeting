@@ -14,10 +14,9 @@ Confirmed current state of the codebase, maintained by the in-lane docs agents
     module load; no DB, no auth.
   - `POST /api/briefings` — bearer token; ingests a briefing. `GET /api/briefings[/:id]` — reads.
   - `POST /api/minutes` — browser-facing, **no token**. Body `{ briefingId, outcome:
-    'approve'|'redirect', directive, answers? }`. Persists a `minutes` row (outcome + full payload),
-    then enqueues a `sprint_queue` row with `goal=directive` and a rendered `minutes` text (outcome,
-    directive, any answers). Returns `{ minutesId, queuedSprintId }`. 400 if `briefingId`/`outcome`/
-    `directive` missing or `outcome` invalid.
+    'approve'|'redirect', directive, answers? }`. Persists a `minutes` row via `db.insertMinutes`
+    and enqueues the next sprint via `db.enqueueSprint`. Returns `{ minutesId, queuedSprintId }`.
+    400 if `briefingId`/`outcome`/`directive` missing or `outcome` invalid.
   - `GET /api/next-sprint` — **requires the bearer token** (the local poller). Atomically claims the
     oldest `pending` queued sprint (`UPDATE ... FOR UPDATE SKIP LOCKED`, marks it `consumed` so it
     drains exactly once) and returns `{ goal, minutes }`; `204` when none pending.
@@ -37,14 +36,33 @@ Confirmed current state of the codebase, maintained by the in-lane docs agents
   - `requireToken(req, reply)` returns a plain boolean (`true` = rejected, 401 sent) so guards
     short-circuit with `if (requireToken(...)) return;` — it must NOT be awaited.
   Tested by `server/test/version.test.js`, `server/test/minutes.test.js`,
+  `server/test/minutes.db.test.js` (the minutes status-machine storage functions),
   `server/test/qa.db.test.js` (the Q&A storage functions), and
   `server/test/qa.routes.test.js` (the Q&A routes) (`cd server && npm test`).
 - **server/src/index.js** — entrypoint: requires `DATABASE_URL`, `LAB_MEETING_TOKEN`, `PORT`
   (fails fast if missing), connects the DB, then listens.
 - **server/src/db.js** — Postgres via `pg`; requires `DATABASE_URL`, no fallback. Tables:
   `briefings`, `minutes`, `sprint_queue`, `qa`. Functions: `insertBriefing`, `listBriefings`,
-  `getBriefing`, `insertMinutes`, `enqueueSprint`, `claimNextSprint` (atomic claim of the oldest
-  pending queued sprint). Q&A channel functions: `insertQuestion({ briefingId, question })` inserts
+  `getBriefing`, `enqueueSprint`, `claimNextSprint` (atomic claim of the oldest
+  pending queued sprint). Minutes status-machine functions drive the
+  `resolved → composing → composed → approved` handoff on a `minutes` row:
+  `insertMinutes({ briefingId, outcome, directive, answers })` inserts a row with
+  `status='resolved'` (fields in dedicated columns, not a payload blob) and returns its id;
+  `claimPendingCompose()` atomically claims the oldest `resolved` row (`UPDATE ... FOR UPDATE SKIP
+  LOCKED`, marks it `composing`) and returns `{ minutesId, briefingId, outcome, directive, answers }`
+  or `null` when none; `setComposed({ id, composedGoal, composedMinutes })` writes the host agent's
+  composed instruction and moves the row to `composed`, returning `true`/`false`;
+  `getMinutesForBriefing(briefingId)` returns all rows for a briefing oldest-first as
+  `[{ id, status, outcome, directive, composedGoal, composedMinutes, created_at }]`;
+  `approveMinutes({ id, goal? })` runs in one transaction — guards the row is `composed` (throws
+  `not found` for an unknown id, `not composed` otherwise), enqueues `sprint_queue` with the given
+  `goal` (falling back to `composed_goal`) and the `composed_minutes`, marks the row `approved`, and
+  returns the new sprint-queue id. The `minutes` table: `id`, `briefing_id` (FK → briefings),
+  `outcome`, `directive`, `answers` (JSONB), `composed_goal`, `composed_minutes`, `status`
+  (`resolved`|`composing`|`composed`|`approved`, default `resolved`), server-stamped `created_at`;
+  the schema is idempotent (`CREATE TABLE IF NOT EXISTS` plus `ALTER TABLE ... ADD COLUMN IF NOT
+  EXISTS` for the new columns) so it runs cleanly on both fresh and existing deployed DBs. Q&A
+  channel functions: `insertQuestion({ briefingId, question })` inserts
   a `pending` `qa` row and returns its id; `claimPendingQuestion()` atomically claims the oldest
   `pending` question (`UPDATE ... FOR UPDATE SKIP LOCKED`, marks it `claimed`) and returns
   `{ id, briefingId, question }` or `null` when none pending; `answerQuestion({ id, answer })` sets
