@@ -64,16 +64,37 @@ Confirmed current state of the codebase, maintained by the in-lane docs agents
 - **server/src/index.js** — entrypoint: requires `DATABASE_URL`, `LAB_MEETING_TOKEN`, `PORT`
   (fails fast if missing), connects the DB, then listens.
 - **server/src/db.js** — Postgres via `pg`; requires `DATABASE_URL`, no fallback. Tables:
-  `briefings`, `minutes`, `sprint_queue`, `qa`. Functions: `insertBriefing`, `listBriefings`,
-  `getBriefing`, `insertMinutes`, `enqueueSprint`, `claimNextSprint` (atomic claim of the oldest
-  pending queued sprint). Q&A channel functions: `insertQuestion({ briefingId, question })` inserts
-  a `pending` `qa` row and returns its id; `claimPendingQuestion()` atomically claims the oldest
-  `pending` question (`UPDATE ... FOR UPDATE SKIP LOCKED`, marks it `claimed`) and returns
-  `{ id, briefingId, question }` or `null` when none pending; `answerQuestion({ id, answer })` sets
-  the answer and marks the row `answered`, returning `true` if a row matched else `false`;
-  `listQAForBriefing(briefingId)` returns the thread `[{ id, question, answer, status, created_at }]`
-  oldest-first. The `qa` table: `id`, `briefing_id` (FK → briefings), `question`, nullable `answer`,
-  `status` (`pending`|`claimed`|`answered`, default `pending`), server-stamped `created_at`.
+  `briefings`, `minutes`, `sprint_queue`, `qa`. Schema is idempotent for fresh and existing
+  deployments: `CREATE TABLE IF NOT EXISTS` covers fresh DBs; `ALTER TABLE minutes ADD COLUMN IF
+  NOT EXISTS` statements bring an existing table forward. Functions:
+  - `insertBriefing`, `listBriefings`, `getBriefing` — briefing CRUD.
+  - `insertMinutes({ briefingId, outcome, directive, answers })` — inserts a `minutes` row with
+    `status='resolved'`; `answers` defaults to `[]`. Returns the new row id.
+  - `claimPendingCompose()` — atomically claims the oldest `resolved` minutes row (`FOR UPDATE SKIP
+    LOCKED`, marks it `composing`). Returns `{ minutesId, briefingId, outcome, directive, answers }`
+    or `null` when none pending.
+  - `setComposed({ id, composedGoal, composedMinutes })` — sets the composed fields and advances
+    the row to `composed`. Returns `true` if a row was updated, `false` if the id is unknown.
+  - `getMinutesForBriefing(briefingId)` — returns all minutes rows for a briefing oldest-first as
+    `[{ id, status, outcome, directive, composedGoal, composedMinutes, created_at }]`.
+  - `approveMinutes({ id, goal })` — in one transaction: reads the minutes row (`FOR UPDATE`),
+    throws `"not found"` if id is unknown or `"not composed"` if status is not `composed`, inserts a
+    `sprint_queue` row (using provided `goal` else `composed_goal`), and marks the minutes row
+    `approved`. Returns the new `sprint_queue` id.
+  - `enqueueSprint({ goal, minutes })` — low-level sprint enqueue; called internally by
+    `approveMinutes`. Not called directly by any route.
+  - `claimNextSprint()` — atomically claims the oldest `pending` queued sprint (`FOR UPDATE SKIP
+    LOCKED`, marks it `consumed`). Returns `{ goal, minutes }` or `null` when none pending.
+  - Q&A channel: `insertQuestion({ briefingId, question })` inserts a `pending` `qa` row and
+    returns its id; `claimPendingQuestion()` atomically claims the oldest `pending` question (marks
+    it `claimed`) and returns `{ id, briefingId, question }` or `null`; `answerQuestion({ id,
+    answer })` sets the answer and marks the row `answered`, returning `true` if a row matched else
+    `false`; `listQAForBriefing(briefingId)` returns `[{ id, question, answer, status, created_at }]`
+    oldest-first.
+  - The `minutes` table columns: `id`, `briefing_id` (FK → briefings), `outcome`, `directive`,
+    `answers` (JSONB), `composed_goal`, `composed_minutes`, `status` (default `resolved`),
+    `created_at`. The `qa` table: `id`, `briefing_id` (FK → briefings), `question`, nullable
+    `answer`, `status` (`pending`|`claimed`|`answered`, default `pending`), `created_at`.
 - **server/src/env.js** — `requireEnv(name)`: fail-fast env lookup, no default values.
 - **client/** — React 18 + Vite 6 SPA with hash-based client-side routing (no router dependency).
   - `src/main.jsx` mounts `src/Router.jsx`.
