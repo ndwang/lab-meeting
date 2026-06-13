@@ -17,6 +17,11 @@ Confirmed current state of the codebase, maintained by the in-lane docs agents
   `briefings`, `minutes`, `sprint_queue`.
 - **server/src/env.js** — `requireEnv(name)`: fail-fast env lookup, no default values.
 - **client/** — React 18 + Vite 6 hello-world: shows liveness + lists ingested briefings.
+- **client testing** — Vitest (jsdom, `globals: true`) configured in `client/vitest.config.js`;
+  run with `cd client && npm test` (`vitest run`). Tests live in `client/src/__tests__/`:
+  `SlideStage.test.jsx` (renderer) and `useMeetingState.test.js` (page-gating state machine),
+  both driven by the real `briefings/sprint-1.json` fixture (relative import). No browser, no
+  running server. Dev deps: `vitest`, `@testing-library/react`, `@testing-library/user-event`, `jsdom`.
 - **scripts/poll.mjs** — local loop-closer stub (drains `/api/next-sprint`, not yet implemented).
 
 Not yet built: meeting UI / slide stage, `/api/minutes`, `/api/next-sprint`, `/api/qa`, voice.
