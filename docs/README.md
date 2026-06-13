@@ -16,7 +16,23 @@ Confirmed current state of the codebase, maintained by the in-lane docs agents
 - **server/src/db.js** — Postgres via `pg`; requires `DATABASE_URL`, no fallback. Tables:
   `briefings`, `minutes`, `sprint_queue`.
 - **server/src/env.js** — `requireEnv(name)`: fail-fast env lookup, no default values.
-- **client/** — React 18 + Vite 6 hello-world: shows liveness + lists ingested briefings.
+- **client/** — React 18 + Vite 6: landing list of ingested briefings, plus the meeting
+  slide stage.
+- **client/src/SlideStage.jsx** — `SlideStage({ slides, currentIndex, answers, onContinue,
+  onAnswer, onDecide })`: presentational component that renders one slide at a time — the
+  title (`data-testid="slide-title"`), content bullets (`data-testid="slide-content"`),
+  the presenter narration (`data-testid="slide-narration"`), and a "Slide N of M" progress
+  indicator. Per-type controls: `info` shows a Continue button (`onContinue()`); `question`
+  shows a textarea + Submit (disabled until non-empty, calls `onAnswer(trimmed)`); `decision`
+  shows a direction textarea + Approve (`onDecide('approve','')`) and Redirect (disabled until
+  non-empty, `onDecide('redirect', direction)`). Empty/out-of-range slides render a "No slide"
+  placeholder; an unrecognised slide type renders content only and logs a `console.warn`. The
+  component holds no data state and makes no fetch calls. Tested by
+  `client/src/__tests__/SlideStage.test.jsx` (`cd client && npm test`, Vitest + jsdom).
+- **client tests** — Vitest (`environment: 'jsdom'`, `globals: true`) configured in
+  `client/vitest.config.js`; run via `cd client && npm test`. `@testing-library/jest-dom`
+  matchers loaded from `client/src/__tests__/setup.js`.
 - **scripts/poll.mjs** — local loop-closer stub (drains `/api/next-sprint`, not yet implemented).
 
-Not yet built: meeting UI / slide stage, `/api/minutes`, `/api/next-sprint`, `/api/qa`, voice.
+Not yet built: meeting view page + client routing, page-gating state machine, `/api/minutes`,
+`/api/next-sprint`, `/api/qa`, voice.
