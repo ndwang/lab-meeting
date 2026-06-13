@@ -29,13 +29,15 @@ CREATE TABLE IF NOT EXISTS minutes (
 
 -- The deployed DB already has a minutes table (id, briefing_id, outcome,
 -- payload, created_at). These idempotent ALTERs bring an existing table
--- forward without touching the legacy payload column, which is left as-is and
--- never referenced by new code.
+-- forward; the legacy payload column is abandoned and dropped (its NOT NULL
+-- constraint would otherwise break the new insert path). DROP is a no-op on a
+-- fresh DB, where payload was never created.
 ALTER TABLE minutes ADD COLUMN IF NOT EXISTS directive TEXT;
 ALTER TABLE minutes ADD COLUMN IF NOT EXISTS answers JSONB;
 ALTER TABLE minutes ADD COLUMN IF NOT EXISTS composed_goal TEXT;
 ALTER TABLE minutes ADD COLUMN IF NOT EXISTS composed_minutes TEXT;
 ALTER TABLE minutes ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'resolved';
+ALTER TABLE minutes DROP COLUMN IF EXISTS payload;
 
 -- Sprints queued by a resolved meeting, drained by the local poller.
 CREATE TABLE IF NOT EXISTS sprint_queue (
