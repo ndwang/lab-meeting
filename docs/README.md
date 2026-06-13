@@ -48,7 +48,8 @@ Confirmed current state of the codebase, maintained by the in-lane docs agents
   Returns `{ currentIndex, answers, decision, continue, answer, decide }`. `info` advances via
   `continue()`; `question` hard-gates until a non-empty `answer(text)` (recorded by index);
   `decision` is terminal — `decide(outcome, direction)` records the outcome without advancing.
-  All captured state lives in client state only (no server writes this sprint).
+  The hook holds no server-write logic; server submission is handled at the page level
+  (see `MeetingView.jsx`).
 - **client/src/styles.css** — global styles plus `.back`, `.slide-stage`, `.slide-progress`,
   `.slide-title`, `.slide-content`, `.slide-narration`, `.slide-controls`, and
   `.decision-actions` CSS classes.
