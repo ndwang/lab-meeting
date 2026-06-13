@@ -6,7 +6,7 @@ import { existsSync, readFileSync } from 'node:fs';
 import Fastify from 'fastify';
 import cors from '@fastify/cors';
 import fastifyStatic from '@fastify/static';
-import { insertBriefing, listBriefings, getBriefing } from './db.js';
+import { insertBriefing, listBriefings, getBriefing, claimNextSprint } from './db.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const clientDist = path.resolve(__dirname, '../../client/dist');
@@ -18,7 +18,11 @@ const { version } = JSON.parse(
   readFileSync(path.resolve(__dirname, '../../package.json'), 'utf8'),
 );
 
-export async function buildApp() {
+// `deps` lets tests inject db functions so app.inject() runs without a real
+// Postgres connection. In production index.js calls buildApp() with no args and
+// the real db.js exports are used.
+export async function buildApp(deps = {}) {
+  const { claimNextSprint: claimNext = claimNextSprint } = deps;
   const app = Fastify({ logger: true });
   await app.register(cors, { origin: true });
 
@@ -52,6 +56,15 @@ export async function buildApp() {
     });
     req.log.info({ briefingId: id, slides: payload.slides.length }, 'briefing ingested');
     return reply.code(201).send({ briefingId: id });
+  });
+
+  // The local poller drains the sprint queue here. Requires the bearer token.
+  // Atomically claims the oldest pending row; 204 when the queue is empty.
+  app.get('/api/next-sprint', async (req, reply) => {
+    if (await requireToken(req, reply)) return;
+    const next = await claimNext();
+    if (!next) return reply.code(204).send();
+    return reply.code(200).send({ goal: next.goal, minutes: next.minutes });
   });
 
   app.get('/api/briefings', async () => ({ briefings: await listBriefings() }));

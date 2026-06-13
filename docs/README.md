@@ -8,13 +8,17 @@ Confirmed current state of the codebase, maintained by the in-lane docs agents
 
 - **server/src/app.js** — `buildApp()`: Fastify routes (`GET /api/health`; `GET /api/version`
   returns `{ version }` read from the root `package.json` at module load, no DB/no auth;
-  `POST /api/briefings` with bearer token, `GET /api/briefings[/:id]`) + built-client serving with
-  SPA fallback. No DB connect, no listen, so routes are testable via `app.inject()`.
-  Tested by `server/test/version.test.js` (`cd server && npm test`).
+  `POST /api/briefings` with bearer token, `GET /api/briefings[/:id]`;
+  `GET /api/next-sprint` with bearer token — atomically claims and drains the oldest pending
+  `sprint_queue` row, returning `{ goal, minutes }` (200) or empty (204) when none pending)
+  + built-client serving with SPA fallback. No DB connect, no listen, so routes are testable via
+  `app.inject()`; `buildApp({ claimNextSprint })` accepts db-function overrides for tests.
+  Tested by `server/test/*.test.js` (`cd server && npm test`).
 - **server/src/index.js** — entrypoint: requires `DATABASE_URL`, `LAB_MEETING_TOKEN`, `PORT`
   (fails fast if missing), connects the DB, then listens.
 - **server/src/db.js** — Postgres via `pg`; requires `DATABASE_URL`, no fallback. Tables:
-  `briefings`, `minutes`, `sprint_queue`.
+  `briefings`, `minutes`, `sprint_queue`. `claimNextSprint()` atomically marks the oldest pending
+  `sprint_queue` row `consumed` (`FOR UPDATE SKIP LOCKED`) and returns `{ goal, minutes }` or null.
 - **server/src/env.js** — `requireEnv(name)`: fail-fast env lookup, no default values.
 - **client/** — React 18 + Vite 6 SPA with hash-based client-side routing (no router dependency).
   - `src/main.jsx` mounts `src/Router.jsx`.
@@ -51,4 +55,4 @@ Confirmed current state of the codebase, maintained by the in-lane docs agents
   `useMeetingState.test.js` — exercised against `briefings/sprint-1.json`.
 - **scripts/poll.mjs** — local loop-closer stub (drains `/api/next-sprint`, not yet implemented).
 
-Not yet built: `/api/minutes`, `/api/next-sprint`, `/api/qa`, voice/TTS/ASR, next-sprint wiring.
+Not yet built: `/api/minutes`, `/api/qa`, voice/TTS/ASR, next-sprint wiring.

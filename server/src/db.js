@@ -59,3 +59,22 @@ export async function getBriefing(id) {
   const { rows } = await pool.query('SELECT * FROM briefings WHERE id = $1', [id]);
   return rows[0] ?? null;
 }
+
+// Atomically claim the oldest pending sprint_queue row, marking it consumed so
+// it drains exactly once. FOR UPDATE SKIP LOCKED keeps concurrent pollers from
+// claiming the same row. Returns { goal, minutes } or null when none pending.
+export async function claimNextSprint() {
+  const { rows } = await pool.query(
+    `UPDATE sprint_queue
+     SET    status = 'consumed'
+     WHERE  id = (
+              SELECT id FROM sprint_queue
+              WHERE  status = 'pending'
+              ORDER  BY id ASC
+              LIMIT  1
+              FOR UPDATE SKIP LOCKED
+            )
+     RETURNING goal, minutes`
+  );
+  return rows[0] ?? null;
+}
