@@ -11,6 +11,18 @@ posts it to the deployed meeting app, and requests a meeting. The human reviews 
 asks grounded follow-ups, and gives direction; that direction becomes the next sprint's input.
 The full vision and rationale live in `initial_files/lab-meeting-design-doc.md` — read it.
 
+## Master rules (apply to all work — agents included)
+
+- **No backward compatibility, compatibility layers, or aliases** unless explicitly required.
+  When not explicitly required, prefer a breaking change that keeps the implementation simpler
+  and cleaner.
+- **Remove historical traces.** Make the codebase read as if the new behavior had always existed —
+  no "kept for compatibility" comments, no dead alternative paths.
+- **No silent fallbacks or ad hoc alternative paths** unless explicitly requested.
+- **Fail fast.** Avoid fallbacks by default. If safe continuation isn't possible, raise a clear
+  error. Do not pass default fallback values to env/config lookups (e.g. no
+  `process.env.X || default`) — require the variable and fail with a clear message if it's missing.
+
 ## Architecture (two systems, joined over HTTP — not the filesystem)
 
 1. **Sprint runner (local, not deployed):** the `/sprint` dynamic workflow in Claude Code.
@@ -61,11 +73,15 @@ answered; **decision** closes the meeting, requires explicit Approve | Redirect,
 ## Conventions
 
 - **Stack:** Node 20+ ESM, Fastify 5, React 18 + Vite 6, Postgres (`pg`). Single deployed service.
-- **Storage:** `server/src/db.js` uses Postgres when `DATABASE_URL` is set, else an in-memory
-  fallback so the app boots without a DB. Don't break the fallback — it keeps deploys green.
+- **Storage:** `server/src/db.js` requires `DATABASE_URL` (Postgres). It fails fast if unset —
+  no in-memory fallback. `server/src/app.js` exports `buildApp()` (routes only, no DB connect, no
+  listen) so routes are testable via `app.inject()`; `server/src/index.js` connects the DB and
+  listens. Required env (all fail fast if missing): `DATABASE_URL`, `LAB_MEETING_TOKEN`, `PORT`.
 - **The server stamps `created_at`.** Agents/scripts must not rely on local clocks for ordering.
-- **Specs are the contract.** Plan with `SPEC_TEMPLATE.md`; review per `skills/spec-review.md`;
-  keep `docs/` current per `skills/docs-maintainer.md` (current state only, no history notes).
+- **Specs are the contract.** Plan with `SPEC_TEMPLATE.md`; review per the `spec-review` skill;
+  keep `docs/` current per the `docs-maintainer` skill (current state only, no history notes).
+- **Skills** live in `.claude/skills/` and are auto-discoverable by every agent (including workflow
+  subagents). Use `spec-review` and `docs-maintainer` in the relevant sprint phases.
 - **Done is model-verifiable:** spec acceptance criteria + a test suite + a responding URL +
   `rubric.md`. Reviewers verify against the spec; integrate loops on tests until green.
 - Completed specs move to `specs/archive/` (reporter source material + demo evidence), not deleted.
@@ -76,7 +92,7 @@ answered; **decision** closes the meeting, requires explicit Approve | Redirect,
 
 - `npm run install:all` — install server + client deps
 - `npm run build` — install all + build the client (what Render runs)
-- `npm start` — run the server (serves API + built client)
+- `npm start` — run the server (serves API + built client); requires DATABASE_URL, LAB_MEETING_TOKEN, PORT
 - `npm run dev:server` / `npm run dev:client` — local dev (client proxies /api to :3000)
 
 ## Build Day guardrails

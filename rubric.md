@@ -15,7 +15,7 @@ A work item is **done** only if all hold:
 3. **No contract drift.** If the implementation weakens an already-implemented contract, it is
    NOT resolved in-lane — it escalates to a question slide (contract changes are PI decisions).
 4. **Docs current.** `docs/` reflects the new confirmed state (current state only, no history),
-   per `skills/docs-maintainer.md`.
+   per the `docs-maintainer` skill.
 5. **Scoped.** The item touches only the files its spec claims. Cross-item file collisions are a
    spec-review failure, not a merge surprise.
 

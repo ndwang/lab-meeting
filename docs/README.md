@@ -1,15 +1,19 @@
 # docs/
 
 Confirmed current state of the codebase, maintained by the in-lane docs agents
-(`skills/docs-maintainer.md`): current state only, no history notes. Together with
+(the `docs-maintainer` skill): current state only, no history notes. Together with
 `minutes/` (direction) this is enough context for any new agent to orient.
 
 ## Current state (kickoff)
 
-- **server/** — Fastify (ESM). `GET /api/health`, `POST /api/briefings` (bearer token),
-  `GET /api/briefings[/:id]`. Serves the built client from `client/dist` with SPA fallback.
-- **server/src/db.js** — Postgres via `pg` when `DATABASE_URL` is set; in-memory fallback
-  otherwise. Tables: `briefings`, `minutes`, `sprint_queue`.
+- **server/src/app.js** — `buildApp()`: Fastify routes (`GET /api/health`, `POST /api/briefings`
+  with bearer token, `GET /api/briefings[/:id]`) + built-client serving with SPA fallback. No DB
+  connect, no listen, so routes are testable via `app.inject()`.
+- **server/src/index.js** — entrypoint: requires `DATABASE_URL`, `LAB_MEETING_TOKEN`, `PORT`
+  (fails fast if missing), connects the DB, then listens.
+- **server/src/db.js** — Postgres via `pg`; requires `DATABASE_URL`, no fallback. Tables:
+  `briefings`, `minutes`, `sprint_queue`.
+- **server/src/env.js** — `requireEnv(name)`: fail-fast env lookup, no default values.
 - **client/** — React 18 + Vite 6 hello-world: shows liveness + lists ingested briefings.
 - **scripts/poll.mjs** — local loop-closer stub (drains `/api/next-sprint`, not yet implemented).
 

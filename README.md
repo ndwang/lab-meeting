@@ -35,9 +35,10 @@ and `initial_files/lab-meeting-design-doc.md` for the full design.
 ## Run locally
 
 ```bash
+cp .env.example .env         # then fill in DATABASE_URL, LAB_MEETING_TOKEN, PORT
 npm run install:all          # install server + client
 npm run build                # build the client
-npm start                    # serve API + client on http://localhost:3000
+npm start                    # serve API + client (fails fast if required env is missing)
 
 # or, two terminals for hot reload:
 npm run dev:server

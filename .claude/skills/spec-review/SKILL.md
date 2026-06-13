@@ -1,6 +1,6 @@
 ---
 name: spec-review
-description: Review conventions for the sprint workflow. Embed in the spec reviewer and implementation reviewer spawn prompts. Adapted from spec-lifecycle-guard for an agent pipeline.
+description: Conventions for reviewing a sprint's specs as a batch (catching cross-spec file collisions before the fan-out) and for skeptically reviewing an implementation against its spec section by section. Use when acting as the spec reviewer or the implementation reviewer in the /sprint workflow.
 ---
 
 # Spec Review Conventions

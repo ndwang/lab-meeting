@@ -33,7 +33,7 @@ ${minutes || '(none — this is the first sprint)'}
 
 Always read CLAUDE.md first for the product vision, the HTTP contract, the
 briefing schema, and conventions. Specs follow SPEC_TEMPLATE.md. Spec review
-follows skills/spec-review.md. Docs follow skills/docs-maintainer.md.
+follows the spec-review skill. Docs follow the docs-maintainer skill.
 `.trim()
 
 // ---------------------------------------------------------------------------
@@ -196,7 +196,7 @@ for (let round = 1; round <= MAX_SPEC_REVIEW_ROUNDS; round++) {
   const review = await agent(
     `${CONTEXT}
 
-You are the SPEC REVIEWER. Follow skills/spec-review.md. Review ALL of this sprint's specs
+You are the SPEC REVIEWER. Use the spec-review skill — its conventions are authoritative. Review ALL of this sprint's specs
 TOGETHER in one batch — check each spec internally (clear, testable acceptance criteria;
 realistic target files) AND check the set against each other. The thing you must not miss:
 overlapping file claims between items that will collide at merge. Read the actual spec files.
@@ -285,7 +285,7 @@ Be specific in reasons; the builder will act on them verbatim.`,
       const docs = await agent(
         `${CONTEXT}
 
-You are the DOCS MAINTAINER for this lane. Follow skills/docs-maintainer.md. Inside worktree
+You are the DOCS MAINTAINER for this lane. Use the docs-maintainer skill — its conventions are authoritative. Inside worktree
 ${wt}, update docs/ to reflect the new CONFIRMED state from this item (spec ${item.specPath}):
 rewrite stale sections, current state only, no history notes. Commit the docs change on ${branch}.`,
         { schema: DOCS_SCHEMA, model: 'sonnet', label: `docs:${item.id}`, phase: 'Work lanes' }

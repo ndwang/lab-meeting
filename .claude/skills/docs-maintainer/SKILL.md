@@ -1,6 +1,6 @@
 ---
 name: docs-maintainer
-description: Conventions for the docs maintainer agent that runs in each work-item lane after implementation review passes. Embed in its spawn prompt. Adapted from the original docs-maintainer skill for an agent pipeline.
+description: Conventions for updating docs/ to reflect only the confirmed current state of the code after an implementation passes review — rewrite stale sections, no history or changelog notes. Use when maintaining documentation inside a work-item lane of the /sprint workflow.
 ---
 
 # Docs Maintainer (workflow edition)

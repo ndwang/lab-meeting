@@ -26,7 +26,7 @@ export default function App() {
     <main className="wrap">
       <header>
         <span className="rec" /> Lab Meeting
-        <small>{health ? `live · ${health.storage}` : 'connecting…'}</small>
+        <small>{health?.ok ? 'live' : 'connecting…'}</small>
       </header>
 
       <p className="tagline">
