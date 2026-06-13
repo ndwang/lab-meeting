@@ -63,13 +63,21 @@ Confirmed current state of the codebase, maintained by the in-lane docs agents
     each row is an `<a href="#/meeting/{id}">` link.
   - `src/MeetingView.jsx` — fetches `GET /api/briefings/:id` (loading/error/ok states), renders
     the sprint header (sprint id + goal), and drives the slide stage via `useMeetingState`. When the
-    human resolves the decision slide, an effect watching `state.decision` `POST`s
-    `/api/minutes` exactly once (guarded by a ref against StrictMode double-invoke) with
-    `{ briefingId, outcome, directive, answers }`, where `answers` is derived from `state.answers`
-    against `briefing.slides`. `submitStatus` (`null`/`pending`/`confirmed`/`error`) drives the UI:
-    on 201 it replaces the stage with a `minutes-confirmed` banner ("Minutes recorded · next sprint
-    queued"); on any non-201/network error it shows a `minutes-error` banner with a `minutes-retry`
-    button that resets `submitStatus` to `null` so the human can re-click Approve/Redirect.
+    human resolves the decision slide it runs the two-step handoff via a `submitStatus` state machine
+    (`null`/`pending`/`composing`/`composed`/`approving`/`approved`/`submit-error`/`approve-error`):
+    **Step 1** — an effect watching `state.decision` `POST`s `/api/minutes` exactly once (guarded by a
+    ref against StrictMode double-invoke) with `{ briefingId, outcome, directive, answers }` (answers
+    derived from `state.answers` against `briefing.slides`); on 201 it stores the returned `minutesId`,
+    enters `composing` (shows a `composing` banner, "Composing the next instruction…"), and a second
+    effect polls `GET /api/minutes?briefingId=N` every 2000ms (interval cleared on unmount; transient
+    poll errors ignored) until the first row's `status === 'composed'`, then seeds `approveGoal` from
+    that row's `composedGoal` and enters `composed`. **Step 2** — renders a `compose-review` section
+    with the editable `Next sprint goal` textarea (the host-composed instruction the human can edit)
+    and an "Approve & launch" button that `POST`s `{ goal }` to `/api/minutes/:minutesId/approve`; on
+    201 it shows the `minutes-confirmed` banner ("Next sprint queued"). A failed `POST /api/minutes`
+    shows a `minutes-error` banner with a `minutes-retry` button (resets the machine so the human can
+    retry); a failed approve shows an `approve-error` banner with an `approve-retry` button (re-sends
+    the approve) while keeping the compose-review visible.
     The slide stage and the Q&A panel render side by side inside a `meeting-stage` wrapper, so the
     live Q&A aside is available throughout the meeting regardless of the current slide.
 - **client/src/QAPanel.jsx** — default export `QAPanel({ briefingId })`: the live Q&A aside.
