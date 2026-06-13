@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { cleanup, render, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import sprint1 from '../../../briefings/sprint-1.json';
 import MeetingView from '../MeetingView.jsx';
 
@@ -194,14 +194,51 @@ describe('MeetingView', () => {
   });
 });
 
-// A fetch mock that serves the briefing GET and records/answers the minutes POST.
-// `postStatus` is the HTTP status the minutes POST resolves to (default 201).
-// `postThrows` makes the minutes POST reject (network error).
-function mockBriefingAndMinutes({ briefing, postStatus = 201, postThrows = false } = {}) {
+// A fetch mock that serves the briefing GET, the minutes POST, the poll GET, and
+// the approve POST for the two-step decision handoff. Uses fake timers so the
+// 2000ms poll can be driven forward with vi.advanceTimersByTimeAsync(2000).
+//
+//   postStatus    — HTTP status for POST /api/minutes (default 201)
+//   postThrows    — make POST /api/minutes throw (network error)
+//   pollRows      — array of { status, composedGoal, composedMinutes } objects
+//                   returned by successive GET /api/minutes?briefingId=N calls.
+//                   If null, no poll mock is exercised. Each call consumes the
+//                   next element; the last element repeats for further calls.
+//   approveStatus — HTTP status for POST /api/minutes/:id/approve (default 201)
+//   approveThrows — make POST /api/minutes/:id/approve throw
+function mockBriefingAndMinutes({
+  briefing,
+  postStatus = 201,
+  postThrows = false,
+  pollRows = null,
+  approveStatus = 201,
+  approveThrows = false,
+} = {}) {
+  // shouldAdvanceTime keeps real time ticking the fake clock so Testing
+  // Library's findBy/waitFor polling resolves; explicit advanceTimersByTimeAsync
+  // still jumps the clock to fire the 2000ms poll interval deterministically.
+  vi.useFakeTimers({ shouldAdvanceTime: true });
+  let pollCount = 0;
   const fetchMock = vi.fn(async (url, opts) => {
-    if (url === '/api/minutes') {
+    if (opts?.method === 'POST' && url === '/api/minutes') {
       if (postThrows) throw new Error('network down');
-      return { ok: postStatus === 201, status: postStatus };
+      return {
+        ok: postStatus === 201,
+        status: postStatus,
+        json: async () => ({ minutesId: 11 }),
+      };
+    }
+    if (url.startsWith('/api/minutes?briefingId=')) {
+      const row = pollRows[Math.min(pollCount++, pollRows.length - 1)];
+      return { ok: true, json: async () => [row] };
+    }
+    if (opts?.method === 'POST' && /\/api\/minutes\/\d+\/approve/.test(url)) {
+      if (approveThrows) throw new Error('network down');
+      return {
+        ok: approveStatus === 201,
+        status: approveStatus,
+        json: async () => ({ queuedSprintId: 22 }),
+      };
     }
     return { ok: true, json: async () => briefing };
   });
@@ -209,135 +246,308 @@ function mockBriefingAndMinutes({ briefing, postStatus = 201, postThrows = false
   return fetchMock;
 }
 
-describe('MeetingView — minutes submission', () => {
-  it('POSTs /api/minutes once with the approve directive from slide content', async () => {
+// Returns the parsed body of the POST /api/minutes/:id/approve call, or null.
+function approvePostBody(fetchMock) {
+  const call = fetchMock.mock.calls.find(
+    (c) => typeof c[0] === 'string' && /\/api\/minutes\/\d+\/approve/.test(c[0])
+  );
+  if (!call) return null;
+  return JSON.parse(call[1].body);
+}
+
+const composedRow = {
+  status: 'composed',
+  composedGoal: 'Build the caching layer',
+  composedMinutes: 'Outcome: redirect\nDirective: cache it',
+};
+
+describe('MeetingView — two-step decision handoff', () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('POSTs /api/minutes once and enters the composing state (pre-poll)', async () => {
     stateStub = {
       ...freshState(),
       currentIndex: 1,
       decision: { outcome: 'approve', direction: 'ship the loop\nthen iterate' },
     };
-    const fetchMock = mockBriefingAndMinutes({ briefing: decisionBriefing });
+    const fetchMock = mockBriefingAndMinutes({
+      briefing: decisionBriefing,
+      pollRows: [composedRow],
+    });
 
     render(<MeetingView id={42} />);
-    await screen.findByTestId('minutes-confirmed');
+    await screen.findByTestId('composing');
 
-    const calls = fetchMock.mock.calls.filter((c) => c[0] === '/api/minutes');
-    expect(calls).toHaveLength(1);
+    const postCalls = fetchMock.mock.calls.filter(
+      (c) => c[0] === '/api/minutes' && c[1]?.method === 'POST'
+    );
+    expect(postCalls).toHaveLength(1);
     expect(minutesPostBody(fetchMock)).toEqual({
       briefingId: 42,
       outcome: 'approve',
       directive: 'ship the loop\nthen iterate',
       answers: [],
     });
+
+    // Poll has not fired yet — no timer has advanced.
+    const pollCalls = fetchMock.mock.calls.filter(
+      (c) => typeof c[0] === 'string' && c[0].startsWith('/api/minutes?briefingId=')
+    );
+    expect(pollCalls).toHaveLength(0);
   });
 
-  it('POSTs the human-typed directive on redirect', async () => {
-    stateStub = {
-      ...freshState(),
-      currentIndex: 1,
-      decision: { outcome: 'redirect', direction: 'focus on X' },
-    };
-    const fetchMock = mockBriefingAndMinutes({ briefing: decisionBriefing });
-
-    render(<MeetingView id={7} />);
-    await screen.findByTestId('minutes-confirmed');
-
-    const body = minutesPostBody(fetchMock);
-    expect(body.outcome).toBe('redirect');
-    expect(body.directive).toBe('focus on X');
-  });
-
-  it('includes captured question answers in the POST body', async () => {
+  it('POSTs the human-typed directive on redirect with captured answers', async () => {
     stateStub = {
       ...freshState(),
       currentIndex: 1,
       answers: { 0: 'my answer' },
-      decision: { outcome: 'approve', direction: 'go' },
+      decision: { outcome: 'redirect', direction: 'focus on X' },
     };
-    const fetchMock = mockBriefingAndMinutes({ briefing: decisionBriefing });
+    const fetchMock = mockBriefingAndMinutes({
+      briefing: decisionBriefing,
+      pollRows: [composedRow],
+    });
 
-    render(<MeetingView id={1} />);
-    await screen.findByTestId('minutes-confirmed');
-
-    expect(minutesPostBody(fetchMock).answers).toEqual([
-      { title: 'Intro', answer: 'my answer' },
-    ]);
-  });
-
-  it('sends answers: [] when there are no captured answers', async () => {
-    stateStub = {
-      ...freshState(),
-      currentIndex: 1,
-      decision: { outcome: 'approve', direction: 'go' },
-    };
-    const fetchMock = mockBriefingAndMinutes({ briefing: decisionBriefing });
-
-    render(<MeetingView id={1} />);
-    await screen.findByTestId('minutes-confirmed');
-
-    expect(minutesPostBody(fetchMock).answers).toEqual([]);
-  });
-
-  it('sends directive: "" when the decision slide has empty content (approve)', async () => {
-    const emptyContentBriefing = {
-      ...decisionBriefing,
-      slides: [
-        { type: 'decision', title: 'Decide', content: [], narration: '' },
-      ],
-    };
-    stateStub = {
-      ...freshState(),
-      currentIndex: 0,
-      decision: { outcome: 'approve', direction: '' },
-    };
-    const fetchMock = mockBriefingAndMinutes({ briefing: emptyContentBriefing });
-
-    render(<MeetingView id={1} />);
-    await screen.findByTestId('minutes-confirmed');
+    render(<MeetingView id={7} />);
+    await screen.findByTestId('composing');
 
     const body = minutesPostBody(fetchMock);
-    expect(body.directive).toBe('');
-    expect(body.outcome).toBe('approve');
+    expect(body.outcome).toBe('redirect');
+    expect(body.directive).toBe('focus on X');
+    expect(body.answers).toEqual([{ title: 'Intro', answer: 'my answer' }]);
   });
 
-  it('shows the confirmation state and hides the slide stage on 201', async () => {
+  it('polls until composed, then shows the editable compose-review and hides the stage', async () => {
     stateStub = {
       ...freshState(),
       currentIndex: 1,
-      decision: { outcome: 'approve', direction: 'go' },
+      decision: { outcome: 'redirect', direction: 'cache it' },
     };
-    mockBriefingAndMinutes({ briefing: decisionBriefing, postStatus: 201 });
+    mockBriefingAndMinutes({
+      briefing: decisionBriefing,
+      pollRows: [composedRow],
+    });
 
     render(<MeetingView id={1} />);
-    await screen.findByTestId('minutes-confirmed');
+    await screen.findByTestId('composing');
 
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(2000);
+    });
+
+    const review = await screen.findByTestId('compose-review');
+    expect(review).toBeTruthy();
+    const textarea = screen.getByLabelText('Next sprint goal');
+    expect(textarea.value).toBe('Build the caching layer');
     expect(screen.queryByTestId('slide-stage')).toBeNull();
+    expect(screen.queryByTestId('composing')).toBeNull();
   });
 
-  it('shows an error + retry and keeps the slide stage on a non-201 response', async () => {
+  it('stays composing while the poll returns a not-yet-composed row', async () => {
+    stateStub = {
+      ...freshState(),
+      currentIndex: 1,
+      decision: { outcome: 'redirect', direction: 'cache it' },
+    };
+    mockBriefingAndMinutes({
+      briefing: decisionBriefing,
+      pollRows: [{ status: 'resolved' }, { status: 'resolved' }, composedRow],
+    });
+
+    render(<MeetingView id={1} />);
+    await screen.findByTestId('composing');
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(2000);
+    });
+    expect(screen.getByTestId('composing')).toBeTruthy();
+    expect(screen.queryByTestId('compose-review')).toBeNull();
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(2000);
+    });
+    expect(screen.getByTestId('composing')).toBeTruthy();
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(2000);
+    });
+    expect(await screen.findByTestId('compose-review')).toBeTruthy();
+  });
+
+  it('approves the edited goal and shows "Next sprint queued"', async () => {
+    stateStub = {
+      ...freshState(),
+      currentIndex: 1,
+      decision: { outcome: 'redirect', direction: 'cache it' },
+    };
+    const fetchMock = mockBriefingAndMinutes({
+      briefing: decisionBriefing,
+      pollRows: [composedRow],
+    });
+
+    render(<MeetingView id={1} />);
+    await screen.findByTestId('composing');
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(2000);
+    });
+    await screen.findByTestId('compose-review');
+
+    const textarea = screen.getByLabelText('Next sprint goal');
+    fireEvent.change(textarea, { target: { value: 'edited goal' } });
+    fireEvent.click(screen.getByRole('button', { name: /Approve & launch/ }));
+
+    const confirmed = await screen.findByTestId('minutes-confirmed');
+    expect(confirmed.textContent).toContain('Next sprint queued');
+    expect(screen.queryByTestId('compose-review')).toBeNull();
+
+    expect(approvePostBody(fetchMock)).toEqual({ goal: 'edited goal' });
+    const approveCall = fetchMock.mock.calls.find(
+      (c) => typeof c[0] === 'string' && /\/api\/minutes\/\d+\/approve/.test(c[0])
+    );
+    expect(approveCall[0]).toBe('/api/minutes/11/approve');
+  });
+
+  it('approves the unedited composed goal when the human does not edit it', async () => {
+    stateStub = {
+      ...freshState(),
+      currentIndex: 1,
+      decision: { outcome: 'redirect', direction: 'cache it' },
+    };
+    const fetchMock = mockBriefingAndMinutes({
+      briefing: decisionBriefing,
+      pollRows: [composedRow],
+    });
+
+    render(<MeetingView id={1} />);
+    await screen.findByTestId('composing');
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(2000);
+    });
+    await screen.findByTestId('compose-review');
+
+    fireEvent.click(screen.getByRole('button', { name: /Approve & launch/ }));
+    await screen.findByTestId('minutes-confirmed');
+
+    expect(approvePostBody(fetchMock)).toEqual({ goal: 'Build the caching layer' });
+  });
+
+  it('shows minutes-error + retry on a non-201 POST and keeps the slide stage', async () => {
     stateStub = {
       ...freshState(),
       currentIndex: 1,
       decision: { outcome: 'approve', direction: 'go' },
     };
-    mockBriefingAndMinutes({ briefing: decisionBriefing, postStatus: 400 });
+    const fetchMock = mockBriefingAndMinutes({
+      briefing: decisionBriefing,
+      postStatus: 400,
+      pollRows: [composedRow],
+    });
 
     render(<MeetingView id={1} />);
     await screen.findByTestId('minutes-error');
 
     expect(screen.getByTestId('minutes-retry')).toBeTruthy();
     expect(screen.getByTestId('slide-stage')).toBeTruthy();
+
+    // Retry re-sends the POST. Make the second attempt succeed.
+    fetchMock.mockImplementation(async (url, opts) => {
+      if (opts?.method === 'POST' && url === '/api/minutes') {
+        return { ok: true, status: 201, json: async () => ({ minutesId: 11 }) };
+      }
+      if (url.startsWith('/api/minutes?briefingId=')) {
+        return { ok: true, json: async () => [composedRow] };
+      }
+      return { ok: true, json: async () => decisionBriefing };
+    });
+
+    fireEvent.click(screen.getByTestId('minutes-retry'));
+    await screen.findByTestId('composing');
+
+    const postCalls = fetchMock.mock.calls.filter(
+      (c) => c[0] === '/api/minutes' && c[1]?.method === 'POST'
+    );
+    expect(postCalls.length).toBe(2);
   });
 
-  it('shows the error state on a network failure', async () => {
+  it('shows minutes-error on a POST network failure', async () => {
     stateStub = {
       ...freshState(),
       currentIndex: 1,
       decision: { outcome: 'approve', direction: 'go' },
     };
-    mockBriefingAndMinutes({ briefing: decisionBriefing, postThrows: true });
+    mockBriefingAndMinutes({
+      briefing: decisionBriefing,
+      postThrows: true,
+      pollRows: [composedRow],
+    });
 
     render(<MeetingView id={1} />);
     await screen.findByTestId('minutes-error');
+  });
+
+  it('shows approve-error + retry when the approve POST fails, then succeeds on retry', async () => {
+    stateStub = {
+      ...freshState(),
+      currentIndex: 1,
+      decision: { outcome: 'redirect', direction: 'cache it' },
+    };
+    const fetchMock = mockBriefingAndMinutes({
+      briefing: decisionBriefing,
+      pollRows: [composedRow],
+      approveStatus: 500,
+    });
+
+    render(<MeetingView id={1} />);
+    await screen.findByTestId('composing');
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(2000);
+    });
+    await screen.findByTestId('compose-review');
+
+    fireEvent.click(screen.getByRole('button', { name: /Approve & launch/ }));
+    await screen.findByTestId('approve-error');
+    expect(screen.getByTestId('approve-retry')).toBeTruthy();
+    // Compose-review stays so the human can adjust and retry.
+    expect(screen.getByTestId('compose-review')).toBeTruthy();
+
+    // Retry succeeds.
+    fetchMock.mockImplementation(async (url, opts) => {
+      if (opts?.method === 'POST' && /\/api\/minutes\/\d+\/approve/.test(url)) {
+        return { ok: true, status: 201, json: async () => ({ queuedSprintId: 22 }) };
+      }
+      return { ok: true, json: async () => decisionBriefing };
+    });
+    fireEvent.click(screen.getByTestId('approve-retry'));
+    await screen.findByTestId('minutes-confirmed');
+  });
+
+  it('clears the polling interval on unmount (no state update after unmount)', async () => {
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    stateStub = {
+      ...freshState(),
+      currentIndex: 1,
+      decision: { outcome: 'redirect', direction: 'cache it' },
+    };
+    mockBriefingAndMinutes({
+      briefing: decisionBriefing,
+      pollRows: [{ status: 'resolved' }],
+    });
+
+    const { unmount } = render(<MeetingView id={1} />);
+    await screen.findByTestId('composing');
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(2000);
+    });
+
+    unmount();
+    // Advancing past further ticks must not schedule any callback / state update.
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(4000);
+    });
+
+    expect(errorSpy).not.toHaveBeenCalled();
+    errorSpy.mockRestore();
   });
 });
