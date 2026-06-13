@@ -1,58 +1,95 @@
 import { useEffect, useState } from 'react';
+import SlideStage from './SlideStage.jsx';
+import { useMeetingState } from './useMeetingState.js';
 
-// Meeting view shell. The Router dispatches here for #/meeting/:id and passes
-// the parsed integer id. This lane owns routing only: it fetches the briefing
-// for the given id and renders a minimal stage so the route is verifiable end
-// to end. The full page-gated slide stage is layered in by the meeting-view
-// and slide-stage lanes at integration.
+// The meeting page. Owns the top-level data fetch for a single briefing, the
+// loading/error states, and the meeting chrome (sprint name + goal). It hands
+// the slides to the page-gating state machine (useMeetingState) and renders the
+// slide stage. No writes, no polling — answers and the decision live in client
+// state only (this sprint).
 export default function MeetingView({ id }) {
+  // status: 'loading' | 'error' | 'ok'
+  const [status, setStatus] = useState('loading');
   const [briefing, setBriefing] = useState(null);
-  const [error, setError] = useState(null);
 
   useEffect(() => {
     let cancelled = false;
+    setStatus('loading');
+    setBriefing(null);
+
     fetch(`/api/briefings/${id}`)
-      .then((r) => {
-        if (!r.ok) throw new Error(`HTTP ${r.status}`);
-        return r.json();
+      .then(async (res) => {
+        if (!res.ok) throw new Error('not found');
+        const data = await res.json();
+        if (!data || !Array.isArray(data.slides)) {
+          throw new Error('malformed briefing');
+        }
+        return data;
       })
       .then((data) => {
-        if (!cancelled) setBriefing(data);
+        if (cancelled) return;
+        setBriefing(data);
+        setStatus('ok');
       })
-      .catch((e) => {
-        if (!cancelled) setError(e.message);
+      .catch(() => {
+        if (cancelled) return;
+        setStatus('error');
       });
+
     return () => {
       cancelled = true;
     };
   }, [id]);
 
-  if (error) {
-    return (
-      <main className="wrap">
-        <p className="empty">Could not load briefing {id}: {error}</p>
-      </main>
-    );
-  }
+  return (
+    <main className="wrap meeting">
+      <header className="meeting-header">
+        <a className="back" href="#/">← Back</a>
+      </header>
+      {status === 'loading' && <Loading />}
+      {status === 'error' && <ErrorState />}
+      {status === 'ok' && <Meeting briefing={briefing} />}
+    </main>
+  );
+}
 
-  if (!briefing) {
-    return (
-      <main className="wrap">
-        <p className="empty">Loading briefing {id}…</p>
-      </main>
-    );
-  }
+function Loading() {
+  return (
+    <p className="loading" data-testid="loading">
+      Loading…
+    </p>
+  );
+}
 
-  const slides = briefing.slides ?? [];
+function ErrorState() {
+  return (
+    <p className="error" data-testid="error">
+      Briefing not found, or an error occurred loading it.
+    </p>
+  );
+}
+
+// Rendered only once the briefing has loaded so useMeetingState is always
+// driven by a stable, present slides array.
+function Meeting({ briefing }) {
+  const state = useMeetingState(briefing.slides);
 
   return (
-    <main className="wrap">
-      <header>
-        <span className="rec" /> Meeting
-        <small>{briefing.sprint_id || briefing.sprintId || `briefing-${id}`}</small>
-      </header>
-      <h2>{briefing.goal || 'untitled'}</h2>
-      <p className="empty">{slides.length} slide{slides.length === 1 ? '' : 's'}</p>
-    </main>
+    <>
+      <section className="sprint-header" data-testid="sprint-header">
+        <h1 data-testid="sprint-id">{briefing.sprintId}</h1>
+        <p className="goal" data-testid="goal">
+          {briefing.goal}
+        </p>
+      </section>
+      <SlideStage
+        slides={briefing.slides}
+        currentIndex={state.currentIndex}
+        answers={state.answers}
+        onContinue={state.continue}
+        onAnswer={state.answer}
+        onDecide={state.decide}
+      />
+    </>
   );
 }
